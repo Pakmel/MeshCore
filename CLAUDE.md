@@ -62,8 +62,13 @@ on 869 MHz. The retry window must never trigger more than one retransmission.
 ## Versioning
 
 * Single source: `src/meshbuoy_version.h` with `#define MESHBUOY_VERSION "0.1.0"`
-* Patch: bugfix without behavior change. Minor: new feature. Major: format or
-  protocol change (e.g. changed message format). No automatic rollover.
+* Major stays at 0 until the definition of "done" below is fulfilled — only then
+  does the version become 1.0.0.
+* While major is 0 (0.x): patch is for bugfixes only. Minor covers every other
+  change, including format or protocol changes.
+* From 1.0.0 onward: patch is a bugfix without behavior change, minor is a new
+  feature, major is a format or protocol change (e.g. changed message format).
+* No automatic rollover, in either versioning scheme.
 * The version is written to serial at boot and is NOT included in the channel message.
 * The build must pass with zero errors and zero warnings in PlatformIO before every
   version bump. CLAUDE.md is updated in the same commit as the code.
