@@ -107,11 +107,40 @@ instead.
 
 ## Round 2 – DS18B20 on WB_IO1
 
-* [ ] Add OneWire and DallasTemperature to lib_deps for meshbuoy
-* [ ] Init 1-Wire bus on WB_IO1 behind build flag MESHBUOY_DS18B20, 9-bit
+* [x] Add OneWire and DallasTemperature to lib_deps for meshbuoy
+      Checked actual PlatformIO registry versions instead of guessing:
+      `paulstoffregen/OneWire @ ^2.3.8` and `milesburton/DallasTemperature @ ^4.0.6`
+      (both current latest at time of writing, confirmed via `pio pkg search`).
+      Added to `lib_deps` of `[env:RAK_4631_meshbuoy]` in
+      `variants/rak4631/platformio.ini`.
+* [x] Init 1-Wire bus on WB_IO1 behind build flag MESHBUOY_DS18B20, 9-bit
       resolution, detection check at boot (flag is only set if the probe responds)
-* [ ] Asynchronous reading: start conversion, fetch the value without blocking
-* [ ] Write temperature and battery voltage to serial every 10 seconds in test mode
+      `-D MESHBUOY_DS18B20=1` added to the env's build_flags. Confirmed
+      `WB_IO1` is defined in this repo's own `variants/rak4631/variant.h`
+      (`WB_IO1 = 17`, WisBlock base GPIO) before using it - did not pull the
+      pin number from memory. New `examples/meshbuoy/WaterTempSensor.{h,cpp}`
+      wraps OneWire+DallasTemperature; `begin()` calls `getDeviceCount()` +
+      `getAddress()` and only sets `_detected = true` if a device actually
+      answered, then `setResolution(9)`. `main.cpp` setup() logs
+      "DS18B20 detected on WB_IO1" or "...NOT detected..." accordingly -
+      never assumes presence.
+* [x] Asynchronous reading: start conversion, fetch the value without blocking
+      `setWaitForConversion(false)` + `requestTemperatures()` in
+      `startConversion()`, which only starts the conversion and returns.
+      `conversionDone()` gates the read on elapsed millis() since
+      `startConversion()` vs. `DallasTemperature::millisToWaitForConversion(9)`
+      (the library's own constant - 94 ms for 9-bit - not a hand-typed
+      datasheet number). `readTempC()` is only ever called after
+      `conversionDone()` returns true, avoiding the classic 85.0C
+      power-on-reset stale-read bug from reading too early.
+* [x] Write temperature and battery voltage to serial every 10 seconds in test mode
+      `main.cpp` loop() runs a small millis()-driven state machine (not
+      loop-count-driven): `next_test_read_due` is an absolute millis()
+      deadline, compared via the rollover-safe `(long)(now - due) >= 0`
+      idiom. On each 10s tick it starts a conversion; once
+      `conversionDone()`, prints `[DS18B20 test] tempC=<x.x> battV=<x.xx>`
+      (deliberately NOT the final channel contract string - this is a debug
+      line, not the Round 3 push) and reschedules 10s out.
 * [ ] Verify against reference thermometer in a glass of water, deviation under 1 C
 * [ ] Version 0.2.0
 

@@ -5,6 +5,13 @@
   static UITask ui_task(display);
 #endif
 
+#ifdef MESHBUOY_DS18B20
+  #include "WaterTempSensor.h"
+  static WaterTempSensor water_sensor(WB_IO1);
+  static unsigned long next_test_read_due = 0;
+  #define MESHBUOY_TEST_READ_INTERVAL_MS (10UL * 1000UL)
+#endif
+
 class MyMesh : public SensorMesh {
 public:
   MyMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
@@ -114,6 +121,15 @@ void setup() {
 #if ENABLE_ADVERT_ON_BOOT == 1
   the_mesh.sendSelfAdvertisement(16000, false);
 #endif
+
+#ifdef MESHBUOY_DS18B20
+  if (water_sensor.begin()) {
+    Serial.println("DS18B20 detected on WB_IO1");
+  } else {
+    Serial.println("DS18B20 NOT detected on WB_IO1 - check wiring");
+  }
+  next_test_read_due = millis();
+#endif
 }
 
 void loop() {
@@ -146,5 +162,23 @@ void loop() {
 #ifdef DISPLAY_CLASS
   ui_task.loop();
 #endif
+
+#ifdef MESHBUOY_DS18B20
+  if (water_sensor.detected()) {
+    unsigned long now = millis();
+    if (!water_sensor.converting() && (long)(now - next_test_read_due) >= 0) {
+      water_sensor.startConversion();
+    } else if (water_sensor.converting() && water_sensor.conversionDone()) {
+      float temp_c = water_sensor.readTempC();
+      float batt_v = board.getBattMilliVolts() / 1000.0f;
+      Serial.print("[DS18B20 test] tempC=");
+      Serial.print(temp_c, 1);
+      Serial.print(" battV=");
+      Serial.println(batt_v, 2);
+      next_test_read_due = millis() + MESHBUOY_TEST_READ_INTERVAL_MS;
+    }
+  }
+#endif
+
   rtc_clock.tick();
 }
