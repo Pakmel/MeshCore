@@ -8,10 +8,18 @@
 
 #ifdef MESHBUOY_DS18B20
   #include "WaterTempSensor.h"
+  #include "WaterChannel.h"
   #include "meshbuoy_config.h"
   static WaterTempSensor water_sensor(WB_IO1);
+  static WaterChannel water_channel;
+  static WaterReading latest_reading = { WaterReadingCase::SENSOR_ERROR, 0.0f, -127 };  // no reading yet
   static unsigned long next_test_read_due = 0;
+  static unsigned long next_test_send_due = 0;
   #define MESHBUOY_TEST_READ_INTERVAL_MS (10UL * 1000UL)
+  // Round 3 test cadence only (TASKS.md: "test interval 2 minutes") - the
+  // real once-per-hour cadence (MESHBUOY_SEND_INTERVAL_SECS) lands in
+  // Round 5's sleep cycle, not here.
+  #define MESHBUOY_TEST_SEND_INTERVAL_MS (2UL * 60UL * 1000UL)
 #endif
 
 class MyMesh : public SensorMesh {
@@ -128,12 +136,16 @@ void setup() {
 #endif
 
 #ifdef MESHBUOY_DS18B20
+  WaterChannel::selfCheckKeyDerivation();
+  water_channel.begin();
+
   if (water_sensor.begin()) {
     Serial.println("DS18B20 detected on WB_IO1");
   } else {
     Serial.println("DS18B20 NOT detected on WB_IO1 - check wiring");
   }
   next_test_read_due = millis();
+  next_test_send_due = millis();
 #endif
 }
 
@@ -174,39 +186,49 @@ void loop() {
     if (!water_sensor.converting() && (long)(now - next_test_read_due) >= 0) {
       water_sensor.startConversion();
     } else if (water_sensor.converting() && water_sensor.conversionDone()) {
-      WaterReading reading = water_sensor.readResult();
+      latest_reading = water_sensor.readResult();
       float batt_v = board.getBattMilliVolts() / 1000.0f;
 
+      char msg[MESHBUOY_MSG_MAX_LEN];
+      WaterChannel::formatMessage(msg, sizeof(msg), latest_reading, batt_v);
+
+      const char* case_label =
+        latest_reading.case_type == WaterReadingCase::NORMAL ? "case 1 (normal)" :
+        latest_reading.case_type == WaterReadingCase::IMPLAUSIBLE ? "case 2 (implausible)" :
+        "case 3 (sensor error)";
       Serial.print("[DS18B20 test] ");
-      switch (reading.case_type) {
-        case WaterReadingCase::NORMAL:
-          Serial.print("case 1 (normal): Water: ");
-          Serial.print(reading.temp_c, 1);
-          Serial.print("C Batt: ");
-          Serial.print(batt_v, 2);
-          Serial.println("V");
-          break;
-        case WaterReadingCase::IMPLAUSIBLE:
-          Serial.print("case 2 (implausible, outside ");
-          Serial.print(PLAUSIBLE_MIN_C, 1);
-          Serial.print("..");
-          Serial.print(PLAUSIBLE_MAX_C, 1);
-          Serial.print("C): Water: ");
-          Serial.print(reading.temp_c, 1);
-          Serial.print("C? Batt: ");
-          Serial.print(batt_v, 2);
-          Serial.println("V");
-          break;
-        case WaterReadingCase::SENSOR_ERROR:
-          Serial.print("case 3 (sensor error): Water: ERR(");
-          Serial.print(reading.error_code);
-          Serial.print(") Batt: ");
-          Serial.print(batt_v, 2);
-          Serial.println("V");
-          break;
-      }
+      Serial.print(case_label);
+      Serial.print(": ");
+      Serial.println(msg);
+
       next_test_read_due = millis() + MESHBUOY_TEST_READ_INTERVAL_MS;
     }
+  }
+
+  // Round 3 test-mode channel push: send the latest cached reading every
+  // MESHBUOY_TEST_SEND_INTERVAL_MS on the #watertemp hashtag channel.
+  if ((long)(millis() - next_test_send_due) >= 0) {
+    float batt_v = board.getBattMilliVolts() / 1000.0f;
+    char msg[MESHBUOY_MSG_MAX_LEN];
+    WaterChannel::formatMessage(msg, sizeof(msg), latest_reading, batt_v);
+    int msg_len = strlen(msg);
+
+    uint8_t data[5 + MESHBUOY_MSG_MAX_LEN];
+    uint32_t timestamp = the_mesh.getRTCClock()->getCurrentTime();
+    memcpy(data, &timestamp, 4);
+    data[4] = 0;  // flags/attempt byte, unused here
+    memcpy(&data[5], msg, msg_len);
+
+    auto pkt = the_mesh.createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, water_channel.channel, data, 5 + msg_len);
+    if (pkt) {
+      the_mesh.sendFlood(pkt);
+      Serial.print("[channel send] ");
+      Serial.println(msg);
+    } else {
+      Serial.println("[channel send] ERROR: unable to build packet (message too long?)");
+    }
+
+    next_test_send_due = millis() + MESHBUOY_TEST_SEND_INTERVAL_MS;
   }
 #endif
 

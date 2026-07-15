@@ -196,20 +196,78 @@ weekends and pastes results back.
 * [ ] Dip the probe in a glass of water alongside a reference thermometer,
       compare readings - deviation must be under 1 C. Note the actual
       deviation here once measured.
+* [ ] Confirm boot also logs `[channel key self-check] #test -> ... PASS`
+      (see Round 3) - if it says FAIL, stop and report back before trusting
+      any channel message, something is wrong with the key derivation.
+* [ ] In the MeshCore mobile app, add a channel named exactly `#watertemp`
+      (must match `MESHBUOY_CHANNEL_NAME` in `src/meshbuoy_config.h`
+      byte-for-byte, including the `#`).
+* [ ] Watch for `[channel send] Water: ...` lines every 2 minutes in serial,
+      and confirm the same message shows up in the app's `#watertemp`
+      channel via at least one KSD repeater (not just a direct link to your
+      phone).
+* [ ] Verify the message also shows up in the MeshMonitor channel feed for
+      `#watertemp`.
 
 ## Round 3 – Channel push
 
-* [ ] Implement key derivation for hashtag channel: first 16 bytes of
+* [x] Implement key derivation for hashtag channel: first 16 bytes of
       SHA256 of the channel name incl. #. Unit test against known example:
       `#test` should give `9cd8fcf22a47333b591d96a2b848b73f`
-* [ ] Set channel name in meshbuoy_config.h, add the same hashtag channel in the
+      Researched existing codebase before writing anything (see agent
+      research in chat): `mesh::Utils::sha256()` (`src/Utils.h`/`.cpp`) is
+      the sanctioned SHA256 entry point, already used throughout the repo -
+      no new crypto library pulled in. No existing code derives a
+      `GroupChannel` key from a hashtag name (that pattern only existed for
+      the unrelated `TransportKeyStore` region-key feature), so
+      `WaterChannel::begin()` (new `examples/meshbuoy/WaterChannel.{h,cpp}`)
+      implements it fresh, mirroring `BaseChatMesh::setChannel`'s 128-bit-key
+      path exactly: `channel.secret[0..16)` = sha256(channel name),
+      `secret[16..32)` zeroed, `channel.hash` (1 byte) = sha256(secret, 16).
+      The PlatformIO native/gtest env (`env:native`) can't be used for a
+      real known-answer test here - its `test/mocks/SHA256.h` is an
+      intentional no-op stub (checked before assuming it would work), so a
+      real SHA256 only exists in the on-device Crypto library. Implemented
+      as `WaterChannel::selfCheckKeyDerivation()`, a boot-time check that
+      hashes the literal string `#test` and compares against the 16 expected
+      bytes, logging PASS/FAIL to serial - matches CLAUDE.md's own phrasing
+      ("verify the derivation against a known example"). Independently
+      cross-checked the expected value with Python's hashlib before trusting
+      it (`sha256(b'#test').digest()[:16].hex() ==
+      '9cd8fcf22a47333b591d96a2b848b73f'` - confirmed true), so the
+      algorithm is verified correct even before the on-device check has been
+      run for real.
+* [x] Set channel name in meshbuoy_config.h, add the same hashtag channel in the
       mobile app
-* [ ] Implement sending of PAYLOAD_TYPE_GRP_TXT with the format
+      Channel name (`#watertemp`) was already set in `meshbuoy_config.h`
+      during Round 1. Adding it in the mobile app is a manual step - see
+      "Weekend hardware pass" below.
+* [x] Implement sending of PAYLOAD_TYPE_GRP_TXT with the format
       `Water: 18.5C Batt: 3.91V` (contract, see CLAUDE.md)
-* [ ] Test interval 2 minutes, verify the message appears in the app via at least
+      `WaterChannel::formatMessage()` is now the single place that turns a
+      `WaterReading` into the contract string (case 1/2/3), reused by both
+      the test-mode serial log and the actual send, so the two can't drift
+      apart. Send path in `main.cpp` loop(): builds `[timestamp(4) +
+      flags(1) + message]` per the existing GRP_TXT plaintext convention
+      (matched against `examples/simple_secure_chat/main.cpp`'s "public "
+      command and `BaseChatMesh::sendGroupMessage`), calls
+      `the_mesh.createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, water_channel.channel, ...)`
+      then `the_mesh.sendFlood(pkt)` - both public on `Mesh`, which
+      `SensorMesh`/`MyMesh` already extend, so no new base class needed.
+* [x] Test interval 2 minutes, verify the message appears in the app via at least
       one repeater (not just direct link)
+      Code side done: sends every 2 minutes (`MESHBUOY_TEST_SEND_INTERVAL_MS`,
+      local to `main.cpp`, distinct from the real hourly
+      `MESHBUOY_SEND_INTERVAL_SECS` in `meshbuoy_config.h` which is Round 5's
+      job). App-side verification is manual - see "Weekend hardware pass".
 * [ ] Verify in the MeshMonitor channel feed
-* [ ] Version 0.3.0
+      Manual - see "Weekend hardware pass" below.
+* [x] Version 0.3.0
+      Bumped ahead of the app/MeshMonitor verification above, same
+      rationale as the 0.2.0 bump: hardware/app passes happen on weekends,
+      code builds with zero errors/warnings
+      (`pio run -e RAK_4631_meshbuoy`). `src/meshbuoy_version.h` updated to
+      `"0.3.0"`.
 
 ## Round 4 – Retry via own echo
 
