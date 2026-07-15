@@ -9,6 +9,7 @@
 #ifdef MESHBUOY_DS18B20
   #include "WaterTempSensor.h"
   #include "WaterChannel.h"
+  #include "EchoRetry.h"
   #include "meshbuoy_config.h"
   static WaterTempSensor water_sensor(WB_IO1);
   static WaterChannel water_channel;
@@ -20,17 +21,47 @@
   // real once-per-hour cadence (MESHBUOY_SEND_INTERVAL_SECS) lands in
   // Round 5's sleep cycle, not here.
   #define MESHBUOY_TEST_SEND_INTERVAL_MS (2UL * 60UL * 1000UL)
+
+  // Round 4: send cycle now has two phases per transmission - the initial
+  // TX, then a RETRY_WINDOW_S listen for our own echo before deciding
+  // whether to retransmit once.
+  enum class SendCycleState : uint8_t { IDLE, WAITING_FOR_ECHO };
+  static SendCycleState send_cycle_state = SendCycleState::IDLE;
+  // Cached exact bytes of the pending transmission, so a retry resends
+  // byte-identical content rather than a freshly-read value/timestamp.
+  static uint8_t pending_data[5 + MESHBUOY_MSG_MAX_LEN];
+  static int pending_data_len = 0;
 #endif
 
 class MyMesh : public SensorMesh {
 public:
   MyMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::MillisecondClock& ms, mesh::RNG& rng, mesh::RTCClock& rtc, mesh::MeshTables& tables)
-     : SensorMesh(board, radio, ms, rng, rtc, tables), 
+     : SensorMesh(board, radio, ms, rng, rtc, tables),
        battery_data(12*24, 5*60)    // 24 hours worth of battery data, every 5 minutes
   {
   }
 
+#ifdef MESHBUOY_DS18B20
+  // Public so the send-cycle state machine in main.cpp loop() can arm/
+  // check/disarm it directly.
+  EchoRetry echo_retry;
+#endif
+
 protected:
+#ifdef MESHBUOY_DS18B20
+  // Fires for every raw incoming packet BEFORE MeshCore's own flood-dedup
+  // (hasSeen()) would otherwise silently swallow our own echoed packet as
+  // a "duplicate" - see EchoRetry.h. Dispatcher::logRx() is a no-op by
+  // default, so no base call is needed.
+  void logRx(mesh::Packet* pkt, int len, float score) override {
+    if (echo_retry.armed()) {
+      uint8_t hash[MAX_HASH_SIZE];
+      pkt->calculatePacketHash(hash);
+      echo_retry.onPacketSeen(hash);
+    }
+  }
+#endif
+
   /* ========================== custom logic here ========================== */
   Trigger low_batt, critical_batt;
   TimeSeriesData  battery_data;
@@ -66,6 +97,21 @@ MyMesh the_mesh(board, radio_driver, *new ArduinoMillis(), fast_rng, rtc_clock, 
 void halt() {
   while (1) ;
 }
+
+#ifdef MESHBUOY_DS18B20
+// Builds and transmits a GRP_TXT packet on the water channel. Returns the
+// packet's own hash via `out_hash` (MAX_HASH_SIZE bytes) so the caller can
+// arm the echo watch - computed before sendFlood() hands the packet off,
+// since its lifecycle belongs to the dispatcher/packet manager afterwards.
+static bool meshbuoySendChannelData(const uint8_t* data, int data_len, uint8_t* out_hash) {
+  auto pkt = the_mesh.createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, water_channel.channel, data, data_len);
+  if (!pkt) return false;
+
+  pkt->calculatePacketHash(out_hash);
+  the_mesh.sendFlood(pkt);
+  return true;
+}
+#endif
 
 static char command[160];
 
@@ -205,30 +251,53 @@ void loop() {
     }
   }
 
-  // Round 3 test-mode channel push: send the latest cached reading every
-  // MESHBUOY_TEST_SEND_INTERVAL_MS on the #watertemp hashtag channel.
-  if ((long)(millis() - next_test_send_due) >= 0) {
+  // Round 3/4 test-mode channel push: send the latest cached reading every
+  // MESHBUOY_TEST_SEND_INTERVAL_MS on the #watertemp hashtag channel, then
+  // (Round 4) listen RETRY_WINDOW_S for our own echo before deciding
+  // whether a single retransmit is needed.
+  if (send_cycle_state == SendCycleState::IDLE && (long)(millis() - next_test_send_due) >= 0) {
     float batt_v = board.getBattMilliVolts() / 1000.0f;
     char msg[MESHBUOY_MSG_MAX_LEN];
     WaterChannel::formatMessage(msg, sizeof(msg), latest_reading, batt_v);
     int msg_len = strlen(msg);
 
-    uint8_t data[5 + MESHBUOY_MSG_MAX_LEN];
     uint32_t timestamp = the_mesh.getRTCClock()->getCurrentTime();
-    memcpy(data, &timestamp, 4);
-    data[4] = 0;  // flags/attempt byte, unused here
-    memcpy(&data[5], msg, msg_len);
+    memcpy(pending_data, &timestamp, 4);
+    pending_data[4] = 0;  // flags/attempt byte, unused here
+    memcpy(&pending_data[5], msg, msg_len);
+    pending_data_len = 5 + msg_len;
 
-    auto pkt = the_mesh.createGroupDatagram(PAYLOAD_TYPE_GRP_TXT, water_channel.channel, data, 5 + msg_len);
-    if (pkt) {
-      the_mesh.sendFlood(pkt);
+    uint8_t sent_hash[MAX_HASH_SIZE];
+    if (meshbuoySendChannelData(pending_data, pending_data_len, sent_hash)) {
+      the_mesh.echo_retry.arm(sent_hash, (unsigned long)RETRY_WINDOW_S * 1000UL);
+      send_cycle_state = SendCycleState::WAITING_FOR_ECHO;
       Serial.print("[channel send] ");
       Serial.println(msg);
     } else {
       Serial.println("[channel send] ERROR: unable to build packet (message too long?)");
+      next_test_send_due = millis() + MESHBUOY_TEST_SEND_INTERVAL_MS;
     }
+  } else if (send_cycle_state == SendCycleState::WAITING_FOR_ECHO) {
+    if (the_mesh.echo_retry.echoHeard()) {
+      Serial.println("[retry] repeat heard");
+      the_mesh.echo_retry.disarm();
+      send_cycle_state = SendCycleState::IDLE;
+      next_test_send_due = millis() + MESHBUOY_TEST_SEND_INTERVAL_MS;
+    } else if (the_mesh.echo_retry.windowExpired()) {
+      // Never more than one retry: disarm before resending so the retry's
+      // own transmission can't re-trigger this branch.
+      the_mesh.echo_retry.disarm();
 
-    next_test_send_due = millis() + MESHBUOY_TEST_SEND_INTERVAL_MS;
+      uint8_t retry_hash[MAX_HASH_SIZE];
+      if (meshbuoySendChannelData(pending_data, pending_data_len, retry_hash)) {
+        Serial.println("[retry] retry sent");
+      } else {
+        Serial.println("[retry] gave up");
+      }
+      // Done regardless of the retry's own outcome - no second echo wait.
+      send_cycle_state = SendCycleState::IDLE;
+      next_test_send_due = millis() + MESHBUOY_TEST_SEND_INTERVAL_MS;
+    }
   }
 #endif
 

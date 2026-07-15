@@ -208,6 +208,13 @@ weekends and pastes results back.
       phone).
 * [ ] Verify the message also shows up in the MeshMonitor channel feed for
       `#watertemp`.
+* [ ] Retry field test (Round 4): temporarily power off/move out of range
+      the nearest KSD repeater, then watch serial for a full send cycle.
+      Expect `[channel send] ...` followed by `[retry] retry sent` roughly
+      `RETRY_WINDOW_S` (30s) later, since no repeater is around to echo the
+      packet back. Turn the repeater back on and confirm a later cycle logs
+      `[retry] repeat heard` instead, well before the 30s window elapses.
+      Note actual timing observed here.
 
 ## Round 3 – Channel push
 
@@ -271,13 +278,53 @@ weekends and pastes results back.
 
 ## Round 4 – Retry via own echo
 
-* [ ] After TX: stay in RX for RETRY_WINDOW_S (start 30 s), match incoming
+* [x] After TX: stay in RX for RETRY_WINDOW_S (start 30 s), match incoming
       packets against own packet hash
-* [ ] No repeat heard: resend ONCE, then done regardless
-* [ ] Log outcome to serial: "repeat heard" / "retry sent" / "gave up"
+      Researched the RX pipeline before writing anything (see chat): MeshCore's
+      own flood-dedup (`SimpleMeshTables::hasSeen()`, called inside
+      `Mesh::onRecvPacket()`) already marks our own just-sent packet as "seen"
+      right after `sendFlood()`, so a normal app-level receive callback would
+      never see the echo - it'd be silently dropped as a duplicate before
+      reaching us. Used `Dispatcher::logRx(Packet*, int, float)` instead: a
+      protected virtual hook (`src/Dispatcher.h:159`) that fires for every
+      raw incoming packet strictly before any dedup, already used by
+      `examples/simple_repeater/MyMesh.cpp` for packet logging - same
+      mechanism, different purpose here. New `MyMesh::logRx()` override in
+      `main.cpp` feeds `Packet::calculatePacketHash()` (existing primitive,
+      `src/Packet.cpp`, SHA256 of payload type + payload bytes) into a new
+      `EchoRetry` class (`examples/meshbuoy/EchoRetry.{h,cpp}`) that just
+      holds the armed hash, a millis()-timed deadline, and an echo-heard
+      flag - no Mesh dependency, easy to reason about independently. No
+      explicit "stay in RX" code needed: confirmed the Dispatcher's normal
+      `loop()`/`checkRecv()` re-arms `startReceive()` automatically once
+      idle after a TX completes, as long as nothing calls radio/board sleep
+      during the window - which nothing in meshbuoy does yet (that's
+      Round 5's job, and it will need to respect this window, see the
+      Round 5 plan).
+* [x] No repeat heard: resend ONCE, then done regardless
+      `send_cycle_state` (IDLE / WAITING_FOR_ECHO) in `main.cpp` loop()
+      gates this: on window expiry with no echo, `echo_retry.disarm()` is
+      called *before* the retry send (so the retry's own transmission can
+      never re-trigger this branch), then exactly one
+      `meshbuoySendChannelData()` call resends the cached `pending_data`
+      bytes (same timestamp, same message - a real retry of the same
+      attempt, not a fresh reading). State returns to IDLE immediately
+      after, regardless of whether the retry send itself succeeded - no
+      second echo wait.
+* [x] Log outcome to serial: "repeat heard" / "retry sent" / "gave up"
+      Three distinct outcomes, all logged: `[retry] repeat heard` (echo
+      matched within the window), `[retry] retry sent` (no echo, retry
+      packet built and transmitted), `[retry] gave up` (no echo, AND the
+      retry's own `createGroupDatagram()` failed - distinct failure path
+      from a successful retry transmission).
 * [ ] Test by temporarily turning off the nearest repeater and observe the retry
       firing
-* [ ] Version 0.4.0
+      Moved to "Weekend hardware pass" below.
+* [x] Version 0.4.0
+      Bumped ahead of the field test above, same rationale as 0.2.0/0.3.0:
+      code builds with zero errors/warnings
+      (`pio run -e RAK_4631_meshbuoy`). `src/meshbuoy_version.h` updated to
+      `"0.4.0"`.
 
 ## Round 5 – Sleep cycle and power budget
 
