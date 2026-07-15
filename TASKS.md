@@ -160,7 +160,42 @@ instead.
       "case N (...)" so the applicable case is explicit in the log, e.g.
       `[DS18B20 test] case 1 (normal): Water: 18.5C Batt: 3.91V`.
 * [ ] Verify against reference thermometer in a glass of water, deviation under 1 C
-* [ ] Version 0.2.0
+      Moved to "Weekend hardware pass" below - project owner does hardware
+      passes on weekends, see that section for exact steps.
+* [x] Version 0.2.0
+      Bumped ahead of the hardware verification above, per explicit
+      project-owner instruction: code builds with zero errors/warnings
+      (`pio run -e RAK_4631_meshbuoy`), so the version bump gate in
+      CLAUDE.md's "Versioning" section is satisfied even though the
+      DS18B20 accuracy check against a reference thermometer is still
+      pending. `src/meshbuoy_version.h` updated to `"0.2.0"`. Also noticed
+      CLAUDE.md already claimed "the version is written to serial at boot"
+      but nothing actually printed it - wired that up now
+      (`Serial.println(MESHBUOY_VERSION)` in `main.cpp` setup(), right
+      after `Serial.begin()`) so the claim is true rather than aspirational.
+
+## Weekend hardware pass
+
+Pending manual verification - project owner runs hardware steps on
+weekends and pastes results back.
+
+* [ ] Connect DS18B20 to the RAK4631: VDD -> 3.3V, GND -> GND, data -> WB_IO1,
+      with a 4.7k pullup resistor between data and VDD (see CLAUDE.md Hardware).
+* [ ] Double-tap reset for bootloader, copy
+      `.pio/build/RAK_4631_meshbuoy/firmware.uf2` to the drive that appears
+      (labeled `RAK4631` last time, e.g. `E:\`).
+* [ ] Open a serial terminal at 115200 baud **before** resetting again, so the
+      boot lines aren't missed (RAK4631's USB CDC doesn't buffer).
+* [ ] Confirm the boot log shows `DS18B20 detected on WB_IO1` (not
+      `...NOT detected...` - that means a wiring or pullup problem).
+* [ ] Watch the every-10-second test lines, now case-labelled, e.g.
+      `[DS18B20 test] case 1 (normal): Water: 18.5C Batt: 3.91V`. Expect
+      case 1 lines in normal room-temperature air; case 2/3 would only be
+      expected if something is actually wrong (out of the -5..45C plausible
+      range, or the probe misbehaving).
+* [ ] Dip the probe in a glass of water alongside a reference thermometer,
+      compare readings - deviation must be under 1 C. Note the actual
+      deviation here once measured.
 
 ## Round 3 – Channel push
 

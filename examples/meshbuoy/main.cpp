@@ -1,4 +1,5 @@
 #include "SensorMesh.h"
+#include "meshbuoy_version.h"
 
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
@@ -63,6 +64,9 @@ static char command[160];
 void setup() {
   Serial.begin(115200);
   delay(1000);
+
+  Serial.print("MeshBuoy version: ");
+  Serial.println(MESHBUOY_VERSION);
 
   board.begin();
 
