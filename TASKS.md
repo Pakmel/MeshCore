@@ -67,11 +67,43 @@ instead.
       (DFU OTA package), and firmware.uf2 (1,026,048 bytes, generated via
       `pio run -e RAK_4631_sensor -t create_uf2` - this target is not run
       automatically by a plain `pio run`). UF2 is ready for manual flashing.
-* [ ] Flash and verify boot over serial (115200), note firmware version
-* [ ] Copy examples/simple_sensor to examples/meshbuoy, own env in
+* [x] Flash and verify boot over serial (115200), note firmware version
+      Flashed via UF2 (double-tap reset, drive appeared as `E:\` labeled
+      `RAK4631`, firmware.uf2 copied manually by project owner). Serial
+      verified on COM40 @ 115200 via PuTTY. Boot line `Sensor ID: <hex>`
+      confirmed present. CLI responsive; `ver` command (in
+      `src/helpers/CommonCLI.cpp`) confirmed as the version query - firmware
+      is v1.16.0 (build 6 Jun 2026), matching `FIRMWARE_VERSION` in
+      `examples/simple_sensor/SensorMesh.h`. That's >=1.11, so the CPU-temp
+      pull-telemetry bug noted in CLAUDE.md's known pitfalls applies to this
+      base and is relevant once telemetry is touched later. Repeated
+      `RadioLibWrapper: readData(-7)` in the debug log is
+      `RADIOLIB_ERR_CRC_MISMATCH` (confirmed in `RadioLib/src/TypeDef.h`) -
+      expected noise from other mesh traffic on a shared frequency, not a
+      fault.
+* [x] Copy examples/simple_sensor to examples/meshbuoy, own env in
       platformio.ini, build again with zero errors
-* [ ] Create src/meshbuoy_version.h (0.1.0) and src/meshbuoy_config.h with channel
+      Copied directory as-is (no internal renames - SensorMesh.cpp/h etc.
+      keep their names, only the containing example folder is new). Added
+      `[env:RAK_4631_meshbuoy]` in `variants/rak4631/platformio.ini`,
+      extending `rak4631`, building `+<../examples/meshbuoy>`. Left out
+      `DISPLAY_CLASS=SSD1306Display` (present in the stock `RAK_4631_sensor`
+      env) since CLAUDE.md's Hardware section lists no display for this
+      board - RAK19007 baseplate only. Set `ADVERT_NAME` to `"MeshBuoy"`.
+      Built via `pio run -e RAK_4631_meshbuoy`: zero errors, zero warnings
+      (grepped full log, 0 hits for both). RAM 12.1% (28488/235520 bytes),
+      Flash 60.9% (496376/815104 bytes) - slightly smaller than
+      RAK_4631_sensor since the display driver isn't linked in.
+* [x] Create src/meshbuoy_version.h (0.1.0) and src/meshbuoy_config.h with channel
       name, interval, and retry window as constants
+      `src/meshbuoy_version.h`: `#define MESHBUOY_VERSION "0.1.0"`.
+      `src/meshbuoy_config.h`: `MESHBUOY_CHANNEL_NAME "#watertemp"` (asked
+      project owner to confirm since CLAUDE.md only gave `#badtemp` as an
+      "e.g." example, not a firm decision; `#watertemp` was chosen - English,
+      describes content not project name), `MESHBUOY_SEND_INTERVAL_SECS`
+      (60UL*60UL = 1 hour, per architecture decision), `RETRY_WINDOW_S 30`
+      (per CLAUDE.md/TASKS Round 4 starting value). Not yet wired into any
+      code - these are declarations only, consumed starting Round 3/4.
 
 ## Round 2 – DS18B20 on WB_IO1
 
