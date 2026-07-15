@@ -1,89 +1,93 @@
-# Badboj – MeshCore temperatursensor med kanalpush
+# MeshBuoy – MeshCore water temperature sensor with channel push
 
-## Vad detta är
+## What this is
 
-En flytande badtermometer for Vanern/Karlstad. En RAK4631 på RAK19007 basplatta laser
-vattentemperatur med en DS18B20 och pushar värdet en gång i timmen som ett vanligt
-krypterat kanalmeddelande genom KSD MeshCore natet. Noden sover djupt mellan sandningarna.
+A floating bath thermometer for Lake Vänern/Karlstad. A RAK4631 on a RAK19007 baseplate
+reads water temperature with a DS18B20 and pushes the value once an hour as a regular
+encrypted channel message through the KSD MeshCore network. The node sleeps deeply between
+transmissions.
 
-Detta ar en fork av meshcore-dev/MeshCore. Basen ar exemplet `examples/simple_sensor`,
-kopierat till ett eget exempel `examples/badboj_sensor` sa att uppstroms merges forblir rena.
+This is a fork of meshcore-dev/MeshCore. The base is the `examples/simple_sensor` example,
+copied to a dedicated example `examples/meshbuoy` so that upstream merges stay clean.
 
-## Arkitekturbeslut (andras inte utan diskussion)
+## Architecture decisions (do not change without discussion)
 
-* **Push, inte pull.** Standard MeshCore sensor ar pullbaserad och kraver konstant
-  mottagning (8 till 10 mA). Denna nod pushar och sover, mal under 0,5 mA i snitt.
-* **Kanalmeddelande som text.** Payload ar ett vanligt PAYLOAD_TYPE_GRP_TXT paket pa en
-  privat kanal. Ingen egen payloaddesign, ingen specialavkodning. Meddelandet ska vara
-  lasbart i MeshCore appen och i MeshMonitor kanalflodet.
-* **Meddelandeformat, exakt:** `Badtemp: 18.5C Batt: 3.91V`
-  Temperatur med en decimal, spanning med tva decimaler. Formatet ar ett kontrakt,
-  parsning sker nedstroms i Home Assistant/MeshMonitor. Andra aldrig formatet i en patch.
-* **Retry via egen eko.** Efter sandning: lyssna RETRY_WINDOW_S sekunder efter att en
-  repeater studsar vart eget paket (matcha pa packet hash). Hors ingen repeat: sand om
-  exakt en gang. Sedan somn oavsett utfall. Dubbletter i kanalen ar accepterat.
-* **System ON sleep, inte SYSTEMOFF.** RTC maste overleva somnen sa att tidsstamplar
-  och intervall haller. Vackning via RTC timer.
-* **Ingen fjarradministration.** Konfigandring kraver USB. Alla parametrar,
-  inklusive kanalnamnet, ar kompileringstidskonstanter i `src/badboj_config.h`.
+* **Push, not pull.** Standard MeshCore sensors are pull-based and require constant
+  reception (8 to 10 mA). This node pushes and sleeps, targeting under 0.5 mA average.
+* **Channel message as text.** The payload is a regular PAYLOAD_TYPE_GRP_TXT packet on a
+  private channel. No custom payload design, no special decoding. The message must be
+  readable in the MeshCore app and in the MeshMonitor channel feed.
+* **Message format, exact:** `Water: 18.5C Batt: 3.91V`
+  Temperature with one decimal, voltage with two decimals. The format is a contract,
+  parsing happens downstream in Home Assistant/MeshMonitor. Never change the format in a patch.
+* **Retry via own echo.** After sending: listen for RETRY_WINDOW_S seconds for a repeater
+  to bounce our own packet (match on packet hash). If no repeat is heard: resend exactly
+  once. Then sleep regardless of outcome. Duplicates on the channel are accepted.
+* **System ON sleep, not SYSTEMOFF.** The RTC must survive the sleep so that timestamps
+  and intervals hold. Wakeup via RTC timer.
+* **No remote administration.** Configuration changes require USB. All parameters,
+  including the channel name, are compile-time constants in `src/meshbuoy_config.h`.
 
-## Hardvara
+## Hardware
 
-* RAK4631 (nRF52840 + SX1262) pa RAK19007 basplatta
-* DS18B20 vattentat prob: VDD 3,3V, GND, data till WB_IO1, 4,7k pullup data till VDD
-* DS18B20 kors i 9 bitars upplosning (0,5 C steg, under 100 ms konvertering).
-  Konverteringen far inte blockera mesh loopen, starta asynkront eller sov under vantan.
-* Batterispanning via board.getBattMilliVolts() (finns redan i SensorMesh)
-* 4 st solpaneler parallellt (ca 30 mA styck verifierat matt, ej annonsens 300 mA)
-  in pa P1 solkontakten. Laddintervall 4,4 till 5,5 V, Schottkydiod per panel.
+* RAK4631 (nRF52840 + SX1262) on RAK19007 baseplate
+* DS18B20 waterproof probe: VDD 3.3V, GND, data to WB_IO1, 4.7k pullup on data to VDD
+* DS18B20 runs at 9-bit resolution (0.5 C steps, under 100 ms conversion).
+  The conversion must not block the mesh loop, must start asynchronously and must not
+  sleep during the wait.
+* Battery voltage via board.getBattMilliVolts() (already present in SensorMesh)
+* 4x solar panels in parallel (approx. 30 mA each, verified measurement, not the
+  advertised 300 mA) into the P1 solar connector. Charge range 4.4 to 5.5 V, Schottky
+  diode per panel.
 
 ## Radio
 
-Samma preset som KSD natet i Karlstad (EU/UK). Vardena laggs i badboj_config.h och
-verifieras mot en befintlig KSD nod fore forsta fardtest.
+Same preset as the KSD network in Karlstad (EU/UK). Values go in meshbuoy_config.h and
+are verified against an existing KSD node before the first field test.
 
-**Kanal: hashtagkanal.** Kanalnamnet (t.ex. `#badtemp`) ar en kompileringstidskonstant
-i badboj_config.h. Nyckeln harledas vid boot som de forsta 16 byten av SHA256 pa hela
-namnet inklusive #, exakt samma harledning som MeshCore apparna gor. Ingen secrets fil
-behovs, namnet ar nyckeln. Verifiera harledningen mot ett kant exempel:
-`#test` ska ge nyckeln `9cd8fcf22a47333b591d96a2b848b73f`. Anvand MeshCores egen
-SHA256 hjalpfunktion, dra inte in ett nytt kryptobibliotek.
+**Channel: hashtag channel.** The channel name (e.g. `#badtemp`) is a compile-time constant
+in meshbuoy_config.h. The key is derived at boot as the first 16 bytes of SHA256 of the
+full name including #, exactly the same derivation the MeshCore apps use. No secrets file
+is needed, the name is the key. Verify the derivation against a known example:
+`#test` should give the key `9cd8fcf22a47333b591d96a2b848b73f`. Use MeshCore's own
+SHA256 helper function, do not pull in a new crypto library.
 
-Medvetet vagval: hashtagkanaler ar publika by design, vem som helst med namnet kan
-lasa och skriva. Accepterat for badtemperatur. Byt ALDRIG till denna kanaltyp for
-nagot kansligt i andra projekt.
+Deliberate choice: hashtag channels are public by design, anyone with the name can
+read and write. Accepted for water temperature. NEVER switch to this channel type for
+anything sensitive in other projects.
 
-Duty cycle: en sandning i timmen plus max en retry ligger langt under 10 procent
-pa 869 MHz. Retryfonstret far aldrig trigga mer an en omsandning.
+Duty cycle: one transmission per hour plus max one retry is well under 10 percent
+on 869 MHz. The retry window must never trigger more than one retransmission.
 
-## Versionering
+## Versioning
 
-* Enda kalla: `src/badboj_version.h` med `#define BADBOJ_VERSION "0.1.0"`
-* Patch: bugfix utan beteendeandring. Minor: ny funktion. Major: format eller
-  protokollandring (t.ex. andrat meddelandeformat). Ingen automatisk rollover.
-* Versionen skrivs till serial vid boot och ingar INTE i kanalmeddelandet.
-* Bygget maste ga igenom med noll fel och noll varningar i PlatformIO fore varje
-  versionsbump. CLAUDE.md uppdateras i samma commit som koden.
+* Single source: `src/meshbuoy_version.h` with `#define MESHBUOY_VERSION "0.1.0"`
+* Patch: bugfix without behavior change. Minor: new feature. Major: format or
+  protocol change (e.g. changed message format). No automatic rollover.
+* The version is written to serial at boot and is NOT included in the channel message.
+* The build must pass with zero errors and zero warnings in PlatformIO before every
+  version bump. CLAUDE.md is updated in the same commit as the code.
 
-## Byggmiljo
+## Build environment
 
-* PlatformIO i VS Code. RAK4631 targets kraver RAKs board support patch enligt
-  RAK Wireless guide "How to Perform Installation of Board Support Package in
-  PlatformIO" innan forsta bygget. Detta ar ett kant krav, inte ett fel.
-* Nya lib_deps for detta exempel: paulstoffregen/OneWire, milesburton/DallasTemperature
-* Flashning: dubbeltryck reset for bootloader, kopiera UF2
+* PlatformIO in VS Code. RAK4631 targets require RAK's board support patch per
+  RAK Wireless's guide "How to Perform Installation of Board Support Package in
+  PlatformIO" before the first build. This is a known requirement, not a bug.
+* New lib_deps for this example: paulstoffregen/OneWire, milesburton/DallasTemperature
+* Flashing: double-tap reset for bootloader, copy UF2
 
-## Kanda fallgropar
+## Known pitfalls
 
-* WB_IO2 styr 3,3V matning till vissa WisBlock moduler, anvand den inte till 1Wire.
-* Firmware 1.11+ har en kand bugg dar RAK4631 rapporterat CPU temperatur i stallet
-  for sensortemperatur i pull telemetrin. Var push laser DS18B20 direkt och beror
-  inte pa den kodvagen, men verifiera alltid forsta avlasningen mot referens.
-* Radion maste vara i RX under retryfonstret men i sleep/idle resten av timmen.
-  Verifiera med strommatning, inte antaganden.
+* WB_IO2 controls 3.3V power to certain WisBlock modules, do not use it for 1-Wire.
+* Firmware 1.11+ has a known bug where the RAK4631 reports CPU temperature instead
+  of sensor temperature in the pull telemetry. Our push reads the DS18B20 directly and
+  does not depend on that code path, but always verify the first reading against a
+  reference.
+* The radio must be in RX during the retry window but in sleep/idle for the rest of
+  the hour. Verify with power measurement, not assumptions.
 
-## Statusdefinition for "klar"
+## Definition of "done"
 
-Noden ligger i vatten, skickar korrekt temperatur varje hel timme till kanalen,
-syns i MeshMonitor via minst en KSD repeater, och snittforbrukningen ar matt
-under 0,5 mA over ett dygn.
+The node sits in the water, sends the correct temperature every full hour to the
+channel, is visible in MeshMonitor via at least one KSD repeater, and average
+consumption is measured under 0.5 mA over 24 hours.

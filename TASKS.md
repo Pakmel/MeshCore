@@ -1,77 +1,84 @@
-# TASKS – Badboj firmware
+# TASKS – MeshBuoy firmware
 
-Persistent sessionsminne for Claude Code. Bocka av med [x] och lagg anteckningar
-under respektive punkt i samma commit som koden. Ta aldrig bort punkter, stryk dem.
+Persistent session memory for Claude Code. Check off with [x] and add notes
+below each item in the same commit as the code. Never remove items, strike them
+instead.
 
-## Runda 1 – Byggmiljo och baseline (inget eget kod an)
+## Round 1 – Build environment and baseline (no custom code yet)
 
-* [x] Forka meshcore-dev/MeshCore, klona lokalt, skapa branch `badboj`
-      Fork: https://github.com/Pakmel/MeshCore, klonad 2026-07-15. Upstream main
-      vid klontillfallet: commit 219812b9 (2026-07-13). Branch `badboj` skapad
-      fran fork-main. CLAUDE.md och TASKS.md flyttade in i repots rot i samma
-      commit. Notera: `C:\Users\pakme` ar sjalv en (troligen oavsiktlig) tom
-      git-repo-rot utan commits, ej rord av detta arbete.
-* [ ] Utfor RAKs BSP patch for PlatformIO enligt deras guide, dokumentera exakta
-      steg har som anteckning (versioner, sokvagar) for reproducerbarhet
-* [ ] Bygg stock `simple_sensor` for RAK4631 target med noll fel
-* [ ] Flasha och verifiera boot over serial (115200), notera firmwareversion
-* [ ] Kopiera examples/simple_sensor till examples/badboj_sensor, eget env i
-      platformio.ini, bygg igen med noll fel
-* [ ] Skapa src/badboj_version.h (0.1.0) och src/badboj_config.h med kanalnamn,
-      intervall och retryfonster som konstanter
+* [x] Fork meshcore-dev/MeshCore, clone locally, create branch `meshbuoy`
+      Fork: https://github.com/Pakmel/MeshCore, cloned 2026-07-15. Upstream main
+      at clone time: commit 219812b9 (2026-07-13). Branch created as `badboj`,
+      renamed to `meshbuoy` on 2026-07-15 (project renamed from Badboj to
+      MeshBuoy for public sharing in English); old `badboj` branch deleted on
+      origin after the rename push. CLAUDE.md and TASKS.md moved into the repo
+      root in the same commit. Note: `C:\Users\pakme` is itself a (likely
+      unintentional) empty git repo root with no commits, not touched by this
+      work.
+* [ ] Perform RAK's BSP patch for PlatformIO per their guide, document the exact
+      steps here as a note (versions, paths) for reproducibility
+* [ ] Build stock `simple_sensor` for the RAK4631 target with zero errors
+* [ ] Flash and verify boot over serial (115200), note firmware version
+* [ ] Copy examples/simple_sensor to examples/meshbuoy, own env in
+      platformio.ini, build again with zero errors
+* [ ] Create src/meshbuoy_version.h (0.1.0) and src/meshbuoy_config.h with channel
+      name, interval, and retry window as constants
 
-## Runda 2 – DS18B20 pa WB_IO1
+## Round 2 – DS18B20 on WB_IO1
 
-* [ ] Lagg till OneWire och DallasTemperature i lib_deps for badboj_sensor
-* [ ] Init av 1Wire buss pa WB_IO1 bakom build flag BADBOJ_DS18B20, 9 bitars
-      upplosning, detektionskoll vid boot (flagga sätts bara om prob svarar)
-* [ ] Asynkron avlasning: starta konvertering, hamta vardet utan att blockera
-* [ ] Skriv temperatur och batterispanning till serial var 10:e sekund i testlage
-* [ ] Verifiera mot referenstermometer i vattenglas, avvikelse under 1 C
+* [ ] Add OneWire and DallasTemperature to lib_deps for meshbuoy
+* [ ] Init 1-Wire bus on WB_IO1 behind build flag MESHBUOY_DS18B20, 9-bit
+      resolution, detection check at boot (flag is only set if the probe responds)
+* [ ] Asynchronous reading: start conversion, fetch the value without blocking
+* [ ] Write temperature and battery voltage to serial every 10 seconds in test mode
+* [ ] Verify against reference thermometer in a glass of water, deviation under 1 C
 * [ ] Version 0.2.0
 
-## Runda 3 – Kanalpush
+## Round 3 – Channel push
 
-* [ ] Implementera nyckelharledning for hashtagkanal: forsta 16 byten av
-      SHA256 pa kanalnamnet inkl #. Enhetstesta mot kant exempel:
-      `#test` ska ge `9cd8fcf22a47333b591d96a2b848b73f`
-* [ ] Satt kanalnamn i badboj_config.h, lagg in samma hashtagkanal i mobilappen
-* [ ] Implementera sandning av PAYLOAD_TYPE_GRP_TXT med formatet
-      `Badtemp: 18.5C Batt: 3.91V` (kontrakt, se CLAUDE.md)
-* [ ] Testintervall 2 minuter, verifiera att meddelandet syns i appen via minst
-      en repeater (inte bara direktlank)
-* [ ] Verifiera i MeshMonitor kanalflodet
+* [ ] Implement key derivation for hashtag channel: first 16 bytes of
+      SHA256 of the channel name incl. #. Unit test against known example:
+      `#test` should give `9cd8fcf22a47333b591d96a2b848b73f`
+* [ ] Set channel name in meshbuoy_config.h, add the same hashtag channel in the
+      mobile app
+* [ ] Implement sending of PAYLOAD_TYPE_GRP_TXT with the format
+      `Water: 18.5C Batt: 3.91V` (contract, see CLAUDE.md)
+* [ ] Test interval 2 minutes, verify the message appears in the app via at least
+      one repeater (not just direct link)
+* [ ] Verify in the MeshMonitor channel feed
 * [ ] Version 0.3.0
 
-## Runda 4 – Retry via egen eko
+## Round 4 – Retry via own echo
 
-* [ ] Efter TX: stanna i RX i RETRY_WINDOW_S (start 30 s), matcha inkommande
-      paket mot eget packet hash
-* [ ] Ingen repeat hord: sand om EN gang, sedan klart oavsett
-* [ ] Logga utfall till serial: "repeat heard" / "retry sent" / "gave up"
-* [ ] Testa genom att tillfalligt stanga av narmaste repeater och se retryn ga
+* [ ] After TX: stay in RX for RETRY_WINDOW_S (start 30 s), match incoming
+      packets against own packet hash
+* [ ] No repeat heard: resend ONCE, then done regardless
+* [ ] Log outcome to serial: "repeat heard" / "retry sent" / "gave up"
+* [ ] Test by temporarily turning off the nearest repeater and observe the retry
+      firing
 * [ ] Version 0.4.0
 
-## Runda 5 – Somncykel och strombudget
+## Round 5 – Sleep cycle and power budget
 
-* [ ] RTC vackning varje hel timme (System ON sleep, RTC ska overleva)
-* [ ] Sekvens: vakna, starta DS18B20 konvertering, las batteri, sand, retryfonster,
-      sov. Total vakentid under 60 s per timme
-* [ ] Verifiera att radion faktiskt ar nere mellan cykler (strommatning med
-      multimeter eller PPK, mal under 0,5 mA i snitt over minst 6 h)
-* [ ] Notera uppmatta varden har: sleep mA, RX mA, TX topp, snitt
+* [ ] RTC wakeup every full hour (System ON sleep, RTC must survive)
+* [ ] Sequence: wake, start DS18B20 conversion, read battery, send, retry window,
+      sleep. Total awake time under 60 s per hour
+* [ ] Verify the radio is actually down between cycles (power measurement with
+      multimeter or PPK, target under 0.5 mA average over at least 6 h)
+* [ ] Note measured values here: sleep mA, RX mA, TX peak, average
 * [ ] Version 0.5.0
 
-## Runda 6 – Falttest fore sjosattning
+## Round 6 – Field test before deployment
 
-* [ ] 48 h torrtest pa balkong pa enbart batteri, alla timsandningar mottagna
-* [ ] Solpaneler inkopplade, verifiera laddning (rod LED / stigande spanning)
-* [ ] Tomgangsspanning per panel matt i fullt solljus, under 5,5 V efter diod
-* [ ] Sjosattning i badtemperaturmiljo, verifiera lank via KSD repeater
-* [ ] Version 1.0.0 nar statusdefinitionen i CLAUDE.md ar uppfylld
+* [ ] 48 h dry test on balcony on battery only, all hourly transmissions received
+* [ ] Solar panels connected, verify charging (red LED / rising voltage)
+* [ ] Open-circuit voltage per panel measured in full sunlight, under 5.5 V after
+      diode
+* [ ] Deployment in water temperature environment, verify link via KSD repeater
+* [ ] Version 1.0.0 when the definition of done in CLAUDE.md is fulfilled
 
-## Parkerat / senare
+## Parked / later
 
-* [ ] Parsning i Home Assistant till riktig sensorentitet (regex pa kanalmeddelande)
-* [ ] Vintertest: islaggning, batteri i kyla
-* [ ] Eventuell YouTube video nar 1.0.0 ar i vattnet
+* [ ] Parsing in Home Assistant into a real sensor entity (regex on channel message)
+* [ ] Winter test: icing, battery in cold
+* [ ] Possible YouTube video when 1.0.0 is in the water
