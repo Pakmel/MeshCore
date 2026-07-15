@@ -7,6 +7,7 @@
 
 #ifdef MESHBUOY_DS18B20
   #include "WaterTempSensor.h"
+  #include "meshbuoy_config.h"
   static WaterTempSensor water_sensor(WB_IO1);
   static unsigned long next_test_read_due = 0;
   #define MESHBUOY_TEST_READ_INTERVAL_MS (10UL * 1000UL)
@@ -169,12 +170,37 @@ void loop() {
     if (!water_sensor.converting() && (long)(now - next_test_read_due) >= 0) {
       water_sensor.startConversion();
     } else if (water_sensor.converting() && water_sensor.conversionDone()) {
-      float temp_c = water_sensor.readTempC();
+      WaterReading reading = water_sensor.readResult();
       float batt_v = board.getBattMilliVolts() / 1000.0f;
-      Serial.print("[DS18B20 test] tempC=");
-      Serial.print(temp_c, 1);
-      Serial.print(" battV=");
-      Serial.println(batt_v, 2);
+
+      Serial.print("[DS18B20 test] ");
+      switch (reading.case_type) {
+        case WaterReadingCase::NORMAL:
+          Serial.print("case 1 (normal): Water: ");
+          Serial.print(reading.temp_c, 1);
+          Serial.print("C Batt: ");
+          Serial.print(batt_v, 2);
+          Serial.println("V");
+          break;
+        case WaterReadingCase::IMPLAUSIBLE:
+          Serial.print("case 2 (implausible, outside ");
+          Serial.print(PLAUSIBLE_MIN_C, 1);
+          Serial.print("..");
+          Serial.print(PLAUSIBLE_MAX_C, 1);
+          Serial.print("C): Water: ");
+          Serial.print(reading.temp_c, 1);
+          Serial.print("C? Batt: ");
+          Serial.print(batt_v, 2);
+          Serial.println("V");
+          break;
+        case WaterReadingCase::SENSOR_ERROR:
+          Serial.print("case 3 (sensor error): Water: ERR(");
+          Serial.print(reading.error_code);
+          Serial.print(") Batt: ");
+          Serial.print(batt_v, 2);
+          Serial.println("V");
+          break;
+      }
       next_test_read_due = millis() + MESHBUOY_TEST_READ_INTERVAL_MS;
     }
   }

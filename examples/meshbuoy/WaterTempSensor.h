@@ -4,6 +4,19 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
+// See CLAUDE.md "Message format" for the three cases this maps to.
+enum class WaterReadingCase : uint8_t {
+  NORMAL,        // case 1: plausible reading
+  IMPLAUSIBLE,   // case 2: real reading, outside PLAUSIBLE_MIN_C..PLAUSIBLE_MAX_C
+  SENSOR_ERROR   // case 3: no usable reading, error_code is -127 or 85
+};
+
+struct WaterReading {
+  WaterReadingCase case_type;
+  float temp_c;       // meaningful for NORMAL and IMPLAUSIBLE only
+  int16_t error_code;  // meaningful for SENSOR_ERROR only: -127 or 85
+};
+
 // Non-blocking DS18B20 wrapper. Conversion timing is driven by millis(),
 // never by loop iteration counts - reading before the conversion window
 // has elapsed returns a stale or invalid (85.0C power-on-reset) value.
@@ -29,7 +42,11 @@ public:
   bool conversionDone() const;
 
   // Only call once conversionDone() is true. Clears converting().
-  float readTempC();
+  // Classifies the result into one of the three message-contract cases
+  // instead of ever handing back a raw library sentinel as if it were a
+  // real temperature - a disconnected probe or a power-on-reset scratchpad
+  // must never be mistaken for a measurement.
+  WaterReading readResult();
 
 private:
   OneWire _wire;

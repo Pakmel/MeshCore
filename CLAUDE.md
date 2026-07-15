@@ -17,9 +17,22 @@ copied to a dedicated example `examples/meshbuoy` so that upstream merges stay c
 * **Channel message as text.** The payload is a regular PAYLOAD_TYPE_GRP_TXT packet on a
   private channel. No custom payload design, no special decoding. The message must be
   readable in the MeshCore app and in the MeshMonitor channel feed.
-* **Message format, exact:** `Water: 18.5C Batt: 3.91V`
-  Temperature with one decimal, voltage with two decimals. The format is a contract,
-  parsing happens downstream in Home Assistant/MeshMonitor. Never change the format in a patch.
+* **Message format, exact.** The format is a contract, parsing happens downstream in
+  Home Assistant/MeshMonitor. Never change it in a patch - any change is a protocol
+  change (see Versioning). Battery is always included, in all three cases.
+
+  Case 1, normal reading: `Water: 18.5C Batt: 3.91V`
+  Temperature with one decimal, voltage with two decimals.
+
+  Case 2, implausible but real reading (outside `PLAUSIBLE_MIN_C`..`PLAUSIBLE_MAX_C`,
+  defined in `meshbuoy_config.h` as -5.0 and 45.0): `Water: 52.3C? Batt: 3.91V`
+  The value is still sent, with a `?` directly after `C` as the uncertainty marker.
+
+  Case 3, sensor error, no temperature figure is ever sent:
+  `Water: ERR(-127) Batt: 3.91V` — probe not responding (wiring, pullup)
+  `Water: ERR(85) Batt: 3.91V` — power-on default, read too early (timing bug)
+  `ERR` is always followed by the raw code in parentheses, never a number that could
+  be mistaken for a measurement.
 * **Retry via own echo.** After sending: listen for RETRY_WINDOW_S seconds for a repeater
   to bounce our own packet (match on packet hash). If no repeat is heard: resend exactly
   once. Then sleep regardless of outcome. Duplicates on the channel are accepted.

@@ -1,4 +1,5 @@
 #include "WaterTempSensor.h"
+#include "meshbuoy_config.h"
 
 #define DS18B20_RESOLUTION_BITS 9
 
@@ -33,7 +34,33 @@ bool WaterTempSensor::conversionDone() const {
   return elapsed >= DallasTemperature::millisToWaitForConversion(DS18B20_RESOLUTION_BITS);
 }
 
-float WaterTempSensor::readTempC() {
+WaterReading WaterTempSensor::readResult() {
   _converting = false;
-  return _sensors.getTempC(_address);
+
+  // Go via the raw scratchpad value, not getTempC(): this library version
+  // already collapses BOTH "disconnected" and "power-on-reset" down to the
+  // same DEVICE_DISCONNECTED_C (-127) at the getTempC() level, so the two
+  // can only be told apart using the raw sentinels.
+  int32_t raw = _sensors.getTemp(_address);
+
+  WaterReading result;
+  if (raw == DEVICE_POWER_ON_RESET_RAW) {
+    // Read too early / conversion never completed: scratchpad still shows
+    // the chip's fixed power-on default (85.0C in raw ticks).
+    result.case_type = WaterReadingCase::SENSOR_ERROR;
+    result.error_code = 85;
+    result.temp_c = 0.0f;
+  } else if (raw <= DEVICE_DISCONNECTED_RAW) {
+    // No response / bad CRC: wiring or pullup problem.
+    result.case_type = WaterReadingCase::SENSOR_ERROR;
+    result.error_code = -127;
+    result.temp_c = 0.0f;
+  } else {
+    result.error_code = 0;
+    result.temp_c = DallasTemperature::rawToCelsius(raw);
+    result.case_type = (result.temp_c < PLAUSIBLE_MIN_C || result.temp_c > PLAUSIBLE_MAX_C)
+      ? WaterReadingCase::IMPLAUSIBLE
+      : WaterReadingCase::NORMAL;
+  }
+  return result;
 }

@@ -14,3 +14,10 @@
 // How long to stay in RX after TX, listening for a repeater to bounce our
 // own packet, before giving up and sending exactly one retry.
 #define RETRY_WINDOW_S 30
+
+// Plausibility bounds for a water temperature reading. Outside this range
+// the reading is still sent (it's a real value from the sensor, not an
+// error), but flagged with the "?" uncertainty marker - see CLAUDE.md
+// "Message format" case 2.
+#define PLAUSIBLE_MIN_C (-5.0f)
+#define PLAUSIBLE_MAX_C (45.0f)

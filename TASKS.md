@@ -130,7 +130,7 @@ instead.
       `conversionDone()` gates the read on elapsed millis() since
       `startConversion()` vs. `DallasTemperature::millisToWaitForConversion(9)`
       (the library's own constant - 94 ms for 9-bit - not a hand-typed
-      datasheet number). `readTempC()` is only ever called after
+      datasheet number). `readResult()` is only ever called after
       `conversionDone()` returns true, avoiding the classic 85.0C
       power-on-reset stale-read bug from reading too early.
 * [x] Write temperature and battery voltage to serial every 10 seconds in test mode
@@ -138,9 +138,27 @@ instead.
       loop-count-driven): `next_test_read_due` is an absolute millis()
       deadline, compared via the rollover-safe `(long)(now - due) >= 0`
       idiom. On each 10s tick it starts a conversion; once
-      `conversionDone()`, prints `[DS18B20 test] tempC=<x.x> battV=<x.xx>`
-      (deliberately NOT the final channel contract string - this is a debug
-      line, not the Round 3 push) and reschedules 10s out.
+      `conversionDone()`, classifies and prints the reading (see below) and
+      reschedules 10s out.
+
+      **Message contract, all 3 cases (added after initial Round 2 pass,
+      once the full contract was specified):** CLAUDE.md "Message format"
+      now documents case 1 (normal), case 2 (implausible, outside
+      `PLAUSIBLE_MIN_C`/`PLAUSIBLE_MAX_C` = -5.0/45.0, sent with a `?` right
+      after `C`), and case 3 (sensor error, `ERR(-127)` or `ERR(85)`, no
+      temperature figure ever sent). Both constants added to
+      `meshbuoy_config.h`. `WaterTempSensor::readResult()` replaced the old
+      float-returning `readTempC()`: it reads the RAW scratchpad value via
+      `DallasTemperature::getTemp()` rather than `getTempC()`, because this
+      library version (4.0.6) already collapses both "disconnected" and
+      "power-on-reset" down to the same `DEVICE_DISCONNECTED_C` (-127) at
+      the `getTempC()` level - the two can only be told apart using the raw
+      sentinels `DEVICE_DISCONNECTED_RAW` and `DEVICE_POWER_ON_RESET_RAW`
+      (checked in `DallasTemperature.cpp`, not assumed). Verified this by
+      reading the library source rather than guessing. The test-mode serial
+      line now prints the exact contract string per case, prefixed with
+      "case N (...)" so the applicable case is explicit in the log, e.g.
+      `[DS18B20 test] case 1 (normal): Water: 18.5C Batt: 3.91V`.
 * [ ] Verify against reference thermometer in a glass of water, deviation under 1 C
 * [ ] Version 0.2.0
 
