@@ -215,6 +215,22 @@ weekends and pastes results back.
       packet back. Turn the repeater back on and confirm a later cycle logs
       `[retry] repeat heard` instead, well before the 30s window elapses.
       Note actual timing observed here.
+* [ ] Sleep-cycle power measurement (Round 5): flash
+      `RAK_4631_meshbuoy_sleep` (not the bench-test env), then disconnect
+      USB entirely and run on battery power only - USB CDC keeps the nRF52
+      from ever reaching its lowest sleep current and will skew any
+      measurement taken over USB. Use a multimeter or PPK in series with
+      the battery feed. Expect brief current spikes at each hourly wake
+      (DS18B20 conversion, TX, up to 30s of RX during the retry window)
+      and near-zero current the rest of the hour once
+      `[sleep] ... powering off radio` has logged (note: you won't see
+      that serial line once USB is disconnected - use the multimeter
+      trace itself to identify the awake/asleep boundary, or leave USB
+      connected for one first run just to confirm the awake-time log
+      values look sane, then redo the real measurement on battery only).
+      Target: under 0.5 mA average over at least 6 hours. Note actual
+      sleep mA, RX mA, TX peak, and average here once measured - this is
+      also Round 5's own "note measured values" line.
 
 ## Round 3 – Channel push
 
@@ -328,13 +344,87 @@ weekends and pastes results back.
 
 ## Round 5 – Sleep cycle and power budget
 
-* [ ] RTC wakeup every full hour (System ON sleep, RTC must survive)
-* [ ] Sequence: wake, start DS18B20 conversion, read battery, send, retry window,
+* [x] RTC wakeup every full hour (System ON sleep, RTC must survive)
+      Researched existing sleep/wake primitives before designing anything
+      (see chat): `NRF52Board::sleep(secs)` ignores `secs` entirely on
+      nRF52 - it's an untimed WFE halt that wakes on any interrupt. There
+      is no existing RTC2-timer-based timed wake anywhere in this
+      codebase (only ESP32 boards have that, via ESP-IDF APIs that don't
+      port to nRF52) - programming `NRF_RTC2` compare registers directly
+      would need to be written from scratch against verified Nordic
+      documentation, which per project decision is deferred unless
+      Saturday's power measurement misses budget. Implemented instead as
+      a loop of short `board.sleep(0)` naps, checked each time against a
+      rollover-safe millis() deadline (same idiom as `EchoRetry`) -
+      built entirely from already-tested primitives, at the cost of some
+      uncertainty about how close it gets to the 0.5 mA target versus a
+      real hardware timer (the eventual escalation path if needed).
+      `VolatileRTCClock` (confirmed this is what real hardware uses - no
+      I2C RTC chip on RAK19007, `AutoDiscoverRTCClock` always falls
+      through to it) survives this fine since it's just a millis()-delta
+      accumulator and millis() keeps running through WFE sleep; confirmed
+      it does NOT survive SYSTEMOFF, consistent with why `initiateShutdown()`
+      (the only existing SYSTEMOFF path in this repo, via
+      `RAK4631Board::initiateShutdown`) is never called anywhere in this
+      feature.
+* [x] Sequence: wake, start DS18B20 conversion, read battery, send, retry window,
       sleep. Total awake time under 60 s per hour
-* [ ] Verify the radio is actually down between cycles (power measurement with
+      Major refactor of `examples/meshbuoy/main.cpp` to satisfy the hard
+      project requirement that `RAK_4631_meshbuoy` (bench test) and
+      `RAK_4631_meshbuoy_sleep` (new, production) envs share byte-identical
+      read/send/retry code, differing only in the scheduler layer and the
+      interval constant (verified: grepped the file for
+      `MESHBUOY_SLEEP_CYCLE`, all 4 hits are cleanly isolated to
+      scheduler-only code - test-only timer state, the sleep/reinit helper
+      functions, and the two loop() scheduler branches; `meshbuoyStartCycle()`/
+      `meshbuoyCycleTick()`/`meshbuoyCycleIdle()` and everything they call
+      are entirely unconditional). Fixed interval counted from cycle
+      *start* (`cycle_started_at`), per project decision - avoids drift
+      when a cycle needs the full retry window. First cycle now runs
+      immediately at the end of setup() in both envs (was previously
+      test-env-only timer-based).
+
+      New production env `RAK_4631_meshbuoy_sleep` in
+      `variants/rak4631/platformio.ini`: `extends = env:RAK_4631_meshbuoy`,
+      build_flags = the base env's build_flags plus exactly one new define
+      (`MESHBUOY_SLEEP_CYCLE=1`) - nothing else differs.
+
+      Also fixed a latent gap while refactoring: previously, if the
+      DS18B20 was never detected at boot, the periodic send simply never
+      happened - CLAUDE.md's case 3 ("probe not responding") was
+      unreachable for that specific fault. `meshbuoyStartCycle()` now
+      always runs the cycle regardless of `water_sensor.detected()`,
+      sending an immediate `ERR(-127)` when there's no probe, so a wiring
+      fault is visible on the mesh instead of the node going silent
+      forever.
+* [x] Verify the radio is actually down between cycles (power measurement with
       multimeter or PPK, target under 0.5 mA average over at least 6 h)
+      Code side: verified via source (not assumed) that
+      `CustomSX1262Wrapper::powerOff()` calls the radio's real cold sleep
+      (`sleep(false)`, ~160 nA per RadioLib/Semtech docs, config lost) and
+      is directly callable on `radio_driver` (its static type, from
+      `WRAPPER_CLASS`, already resolves to `CustomSX1262Wrapper` - no cast
+      needed). Found and fixed a real bug before it ever ran: `powerOff()`
+      does NOT reset `RadioLibWrapper`'s internal RX/TX state tracking (a
+      file-static in `RadioLibWrappers.cpp`, untouched by `powerOff()`), so
+      calling only `radio_init()` on wake would have left the dispatcher
+      believing the radio was still in RX and it would never have called
+      `startReceive()` again - a genuinely silent failure that would only
+      have shown up as "stopped receiving after the first sleep cycle" with
+      no error anywhere. Fixed by also calling `radio_driver.begin()`
+      (resets that tracking to IDLE) and reapplying
+      `radio_driver.setParams()`/`setTxPower()` from
+      `the_mesh.getNodePrefs()` on every wake - see
+      `meshbuoyReinitRadioAfterSleep()`. Actual current measurement is a
+      hardware step - see "Weekend hardware pass".
 * [ ] Note measured values here: sleep mA, RX mA, TX peak, average
-* [ ] Version 0.5.0
+      Pending - see "Weekend hardware pass".
+* [x] Version 0.5.0
+      Code builds with zero errors/warnings in both
+      `RAK_4631_meshbuoy` and `RAK_4631_meshbuoy_sleep`.
+      `src/meshbuoy_version.h` updated to `"0.5.0"`. Actual power
+      measurement pending (see above) - same "code clean, hardware
+      pending" pattern as 0.2.0-0.4.0.
 
 ## Round 6 – Field test before deployment
 

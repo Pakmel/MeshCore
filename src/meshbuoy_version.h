@@ -4,4 +4,4 @@
 // "Versioning" for the bump rules. Written to serial at boot, never sent
 // in the channel message.
 
-#define MESHBUOY_VERSION "0.4.0"
+#define MESHBUOY_VERSION "0.5.0"

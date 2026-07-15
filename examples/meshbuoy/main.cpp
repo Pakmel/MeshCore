@@ -14,23 +14,37 @@
   static WaterTempSensor water_sensor(WB_IO1);
   static WaterChannel water_channel;
   static WaterReading latest_reading = { WaterReadingCase::SENSOR_ERROR, 0.0f, -127 };  // no reading yet
-  static unsigned long next_test_read_due = 0;
-  static unsigned long next_test_send_due = 0;
-  #define MESHBUOY_TEST_READ_INTERVAL_MS (10UL * 1000UL)
-  // Round 3 test cadence only (TASKS.md: "test interval 2 minutes") - the
-  // real once-per-hour cadence (MESHBUOY_SEND_INTERVAL_SECS) lands in
-  // Round 5's sleep cycle, not here.
-  #define MESHBUOY_TEST_SEND_INTERVAL_MS (2UL * 60UL * 1000UL)
 
-  // Round 4: send cycle now has two phases per transmission - the initial
-  // TX, then a RETRY_WINDOW_S listen for our own echo before deciding
-  // whether to retransmit once.
-  enum class SendCycleState : uint8_t { IDLE, WAITING_FOR_ECHO };
-  static SendCycleState send_cycle_state = SendCycleState::IDLE;
+  // ------------------------------------------------------------------
+  // Shared read -> send -> retry cycle. Identical, unconditional code for
+  // both RAK_4631_meshbuoy (bench test, 2-min interval, no sleep) and
+  // RAK_4631_meshbuoy_sleep (production, hourly interval, real sleep) -
+  // per project decision, the two envs may only differ in the scheduler
+  // layer (below, guarded by MESHBUOY_SLEEP_CYCLE) and the interval
+  // constant. Nothing in this section is env-conditional.
+  // ------------------------------------------------------------------
+  enum class CycleState : uint8_t { IDLE, CONVERTING, WAITING_FOR_ECHO };
+  static CycleState cycle_state = CycleState::IDLE;
+  // millis() timestamp this cycle started at - the fixed interval to the
+  // next cycle is always counted from here, not from when this cycle
+  // finishes, so a slow cycle (e.g. one that needs a retry) doesn't push
+  // out the following cycle's schedule.
+  static unsigned long cycle_started_at = 0;
   // Cached exact bytes of the pending transmission, so a retry resends
   // byte-identical content rather than a freshly-read value/timestamp.
   static uint8_t pending_data[5 + MESHBUOY_MSG_MAX_LEN];
   static int pending_data_len = 0;
+
+  #ifndef MESHBUOY_SLEEP_CYCLE
+  // Bench-test-only scheduling state (see the non-sleep branch in loop()).
+  static unsigned long next_test_read_due = 0;
+  static unsigned long next_test_send_due = 0;
+  #define MESHBUOY_TEST_READ_INTERVAL_MS (10UL * 1000UL)
+  // Round 3 test cadence (TASKS.md: "test interval 2 minutes"). The real
+  // once-per-hour cadence is MESHBUOY_SEND_INTERVAL_SECS, from
+  // meshbuoy_config.h - only RAK_4631_meshbuoy_sleep uses it.
+  #define MESHBUOY_TEST_SEND_INTERVAL_MS (2UL * 60UL * 1000UL)
+  #endif
 #endif
 
 class MyMesh : public SensorMesh {
@@ -111,6 +125,143 @@ static bool meshbuoySendChannelData(const uint8_t* data, int data_len, uint8_t* 
   the_mesh.sendFlood(pkt);
   return true;
 }
+
+// Formats latest_reading + current battery voltage per the message
+// contract, sends it, and arms the echo watch on success. Returns false
+// if the packet couldn't even be built (nothing to wait for then).
+static bool meshbuoySendCurrentReadingAndArm() {
+  float batt_v = board.getBattMilliVolts() / 1000.0f;
+  char msg[MESHBUOY_MSG_MAX_LEN];
+  WaterChannel::formatMessage(msg, sizeof(msg), latest_reading, batt_v);
+  int msg_len = strlen(msg);
+
+  uint32_t timestamp = the_mesh.getRTCClock()->getCurrentTime();
+  memcpy(pending_data, &timestamp, 4);
+  pending_data[4] = 0;  // flags/attempt byte, unused here
+  memcpy(&pending_data[5], msg, msg_len);
+  pending_data_len = 5 + msg_len;
+
+  uint8_t sent_hash[MAX_HASH_SIZE];
+  if (meshbuoySendChannelData(pending_data, pending_data_len, sent_hash)) {
+    the_mesh.echo_retry.arm(sent_hash, (unsigned long)RETRY_WINDOW_S * 1000UL);
+    Serial.print("[channel send] ");
+    Serial.println(msg);
+    return true;
+  }
+
+  Serial.println("[channel send] ERROR: unable to build packet (message too long?)");
+  return false;
+}
+
+// Starts a new cycle: DS18B20 conversion if a probe was detected at boot,
+// otherwise straight to a case-3 sensor-error send (a probe that's been
+// missing since boot is exactly the "not responding" fault case 3 exists
+// for - it must not go silent forever). No-op if a cycle is already
+// running (never stacks cycles).
+static void meshbuoyStartCycle() {
+  if (cycle_state != CycleState::IDLE) return;
+
+  cycle_started_at = millis();
+
+  if (water_sensor.detected()) {
+    water_sensor.startConversion();
+    cycle_state = CycleState::CONVERTING;
+  } else {
+    latest_reading = { WaterReadingCase::SENSOR_ERROR, 0.0f, -127 };
+    cycle_state = meshbuoySendCurrentReadingAndArm() ? CycleState::WAITING_FOR_ECHO : CycleState::IDLE;
+  }
+}
+
+// Call every loop() iteration. Advances CONVERTING -> WAITING_FOR_ECHO ->
+// IDLE. No-op when already IDLE - callers use meshbuoyCycleIdle() to know
+// when it's safe to schedule the next cycle.
+static void meshbuoyCycleTick() {
+  switch (cycle_state) {
+    case CycleState::IDLE:
+      break;
+
+    case CycleState::CONVERTING:
+      if (water_sensor.conversionDone()) {
+        latest_reading = water_sensor.readResult();
+        cycle_state = meshbuoySendCurrentReadingAndArm() ? CycleState::WAITING_FOR_ECHO : CycleState::IDLE;
+      }
+      break;
+
+    case CycleState::WAITING_FOR_ECHO:
+      if (the_mesh.echo_retry.echoHeard()) {
+        Serial.println("[retry] repeat heard");
+        the_mesh.echo_retry.disarm();
+        cycle_state = CycleState::IDLE;
+      } else if (the_mesh.echo_retry.windowExpired()) {
+        // Never more than one retry: disarm before resending so the
+        // retry's own transmission can't re-trigger this branch.
+        the_mesh.echo_retry.disarm();
+
+        uint8_t retry_hash[MAX_HASH_SIZE];
+        if (meshbuoySendChannelData(pending_data, pending_data_len, retry_hash)) {
+          Serial.println("[retry] retry sent");
+        } else {
+          Serial.println("[retry] gave up");
+        }
+        // Done regardless of the retry's own outcome - no second echo wait.
+        cycle_state = CycleState::IDLE;
+      }
+      break;
+  }
+}
+
+static bool meshbuoyCycleIdle() {
+  return cycle_state == CycleState::IDLE;
+}
+
+#ifdef MESHBUOY_SLEEP_CYCLE
+// ------------------------------------------------------------------
+// Scheduler layer, production build only. Everything above this point
+// is shared with RAK_4631_meshbuoy unchanged.
+// ------------------------------------------------------------------
+
+// Re-establishes the radio after CustomSX1262Wrapper::powerOff()'s cold
+// sleep(false), which drops the chip's RF config entirely. radio_init()
+// alone is NOT enough: RadioLibWrapper tracks its own RX/TX state in a
+// file-static variable that powerOff() does not touch, so without calling
+// radio_driver.begin() again (which resets that tracking to STATE_IDLE),
+// the dispatcher's checkRecv() would wrongly believe the radio is still
+// in RX and never call startReceive() again after wake. Verified by
+// reading src/helpers/radiolib/RadioLibWrappers.cpp - not assumed.
+static void meshbuoyReinitRadioAfterSleep() {
+  radio_init();
+  radio_driver.begin();
+  NodePrefs* prefs = the_mesh.getNodePrefs();
+  radio_driver.setParams(prefs->freq, prefs->bw, prefs->sf, prefs->cr);
+  radio_driver.setTxPower(prefs->tx_power_dbm);
+}
+
+// Powers the radio down, then naps in short untimed WFE bursts
+// (board.sleep(0) - nRF52 ignores the argument and wakes on any
+// interrupt) until cycle_started_at + MESHBUOY_SEND_INTERVAL_SECS. Fixed
+// interval counted from this cycle's start (not from now), per project
+// decision - VolatileRTCClock has no wall clock to align to anyway.
+static void meshbuoySleepUntilNextCycle() {
+  unsigned long awake_ms = millis() - cycle_started_at;
+  Serial.print("[sleep] awake for ");
+  Serial.print(awake_ms);
+  Serial.println(" ms, powering off radio");
+
+  radio_driver.powerOff();
+
+  unsigned long next_wake_at = cycle_started_at + (MESHBUOY_SEND_INTERVAL_SECS * 1000UL);
+  unsigned long sleep_started_at = millis();
+  while ((long)(millis() - next_wake_at) < 0) {
+    board.sleep(0);
+    rtc_clock.tick();
+  }
+
+  Serial.print("[sleep] slept ");
+  Serial.print(millis() - sleep_started_at);
+  Serial.println(" ms, reinitializing radio");
+  meshbuoyReinitRadioAfterSleep();
+}
+#endif
 #endif
 
 static char command[160];
@@ -190,8 +341,15 @@ void setup() {
   } else {
     Serial.println("DS18B20 NOT detected on WB_IO1 - check wiring");
   }
+
+#ifndef MESHBUOY_SLEEP_CYCLE
   next_test_read_due = millis();
-  next_test_send_due = millis();
+  next_test_send_due = millis() + MESHBUOY_TEST_SEND_INTERVAL_MS;
+#endif
+
+  // Run the first cycle immediately on boot, both envs - confirms
+  // connectivity right away instead of waiting a full interval first.
+  meshbuoyStartCycle();
 #endif
 }
 
@@ -227,20 +385,36 @@ void loop() {
 #endif
 
 #ifdef MESHBUOY_DS18B20
+  meshbuoyCycleTick();
+
+#ifdef MESHBUOY_SLEEP_CYCLE
+  // Production scheduler: once the cycle (including any retry) has fully
+  // resolved, power off and sleep until the next scheduled wake, then
+  // start the next cycle. No timer needed to decide "when" - waking up
+  // from meshbuoySleepUntilNextCycle() IS the next scheduled cycle time.
+  if (meshbuoyCycleIdle()) {
+    meshbuoySleepUntilNextCycle();
+    meshbuoyStartCycle();
+  }
+#else
+  // Bench-test scheduler: standalone 10s debug read+print (no send - just
+  // a convenience for watching the temperature on serial without waiting
+  // a full 2 minutes), plus the 2-minute send-cycle trigger.
   if (water_sensor.detected()) {
     unsigned long now = millis();
-    if (!water_sensor.converting() && (long)(now - next_test_read_due) >= 0) {
+    if (!water_sensor.converting() && (long)(now - next_test_read_due) >= 0
+        && cycle_state == CycleState::IDLE) {
       water_sensor.startConversion();
-    } else if (water_sensor.converting() && water_sensor.conversionDone()) {
-      latest_reading = water_sensor.readResult();
+    } else if (water_sensor.converting() && water_sensor.conversionDone()
+               && cycle_state == CycleState::IDLE) {
+      WaterReading debug_reading = water_sensor.readResult();
       float batt_v = board.getBattMilliVolts() / 1000.0f;
-
       char msg[MESHBUOY_MSG_MAX_LEN];
-      WaterChannel::formatMessage(msg, sizeof(msg), latest_reading, batt_v);
+      WaterChannel::formatMessage(msg, sizeof(msg), debug_reading, batt_v);
 
       const char* case_label =
-        latest_reading.case_type == WaterReadingCase::NORMAL ? "case 1 (normal)" :
-        latest_reading.case_type == WaterReadingCase::IMPLAUSIBLE ? "case 2 (implausible)" :
+        debug_reading.case_type == WaterReadingCase::NORMAL ? "case 1 (normal)" :
+        debug_reading.case_type == WaterReadingCase::IMPLAUSIBLE ? "case 2 (implausible)" :
         "case 3 (sensor error)";
       Serial.print("[DS18B20 test] ");
       Serial.print(case_label);
@@ -251,54 +425,11 @@ void loop() {
     }
   }
 
-  // Round 3/4 test-mode channel push: send the latest cached reading every
-  // MESHBUOY_TEST_SEND_INTERVAL_MS on the #watertemp hashtag channel, then
-  // (Round 4) listen RETRY_WINDOW_S for our own echo before deciding
-  // whether a single retransmit is needed.
-  if (send_cycle_state == SendCycleState::IDLE && (long)(millis() - next_test_send_due) >= 0) {
-    float batt_v = board.getBattMilliVolts() / 1000.0f;
-    char msg[MESHBUOY_MSG_MAX_LEN];
-    WaterChannel::formatMessage(msg, sizeof(msg), latest_reading, batt_v);
-    int msg_len = strlen(msg);
-
-    uint32_t timestamp = the_mesh.getRTCClock()->getCurrentTime();
-    memcpy(pending_data, &timestamp, 4);
-    pending_data[4] = 0;  // flags/attempt byte, unused here
-    memcpy(&pending_data[5], msg, msg_len);
-    pending_data_len = 5 + msg_len;
-
-    uint8_t sent_hash[MAX_HASH_SIZE];
-    if (meshbuoySendChannelData(pending_data, pending_data_len, sent_hash)) {
-      the_mesh.echo_retry.arm(sent_hash, (unsigned long)RETRY_WINDOW_S * 1000UL);
-      send_cycle_state = SendCycleState::WAITING_FOR_ECHO;
-      Serial.print("[channel send] ");
-      Serial.println(msg);
-    } else {
-      Serial.println("[channel send] ERROR: unable to build packet (message too long?)");
-      next_test_send_due = millis() + MESHBUOY_TEST_SEND_INTERVAL_MS;
-    }
-  } else if (send_cycle_state == SendCycleState::WAITING_FOR_ECHO) {
-    if (the_mesh.echo_retry.echoHeard()) {
-      Serial.println("[retry] repeat heard");
-      the_mesh.echo_retry.disarm();
-      send_cycle_state = SendCycleState::IDLE;
-      next_test_send_due = millis() + MESHBUOY_TEST_SEND_INTERVAL_MS;
-    } else if (the_mesh.echo_retry.windowExpired()) {
-      // Never more than one retry: disarm before resending so the retry's
-      // own transmission can't re-trigger this branch.
-      the_mesh.echo_retry.disarm();
-
-      uint8_t retry_hash[MAX_HASH_SIZE];
-      if (meshbuoySendChannelData(pending_data, pending_data_len, retry_hash)) {
-        Serial.println("[retry] retry sent");
-      } else {
-        Serial.println("[retry] gave up");
-      }
-      // Done regardless of the retry's own outcome - no second echo wait.
-      send_cycle_state = SendCycleState::IDLE;
-      next_test_send_due = millis() + MESHBUOY_TEST_SEND_INTERVAL_MS;
-    }
+  if (meshbuoyCycleIdle() && (long)(millis() - next_test_send_due) >= 0) {
+    next_test_send_due = millis() + MESHBUOY_TEST_SEND_INTERVAL_MS;
+    meshbuoyStartCycle();
   }
+#endif
 #endif
 
   rtc_clock.tick();
