@@ -15,9 +15,58 @@ instead.
       root in the same commit. Note: `C:\Users\pakme` is itself a (likely
       unintentional) empty git repo root with no commits, not touched by this
       work.
-* [ ] Perform RAK's BSP patch for PlatformIO per their guide, document the exact
+* [x] Perform RAK's BSP patch for PlatformIO per their guide, document the exact
       steps here as a note (versions, paths) for reproducibility
-* [ ] Build stock `simple_sensor` for the RAK4631 target with zero errors
+      PlatformIO Core was not installed (`pio` not found in PATH). Installed via
+      the official installer script per docs.platformio.org
+      (https://raw.githubusercontent.com/platformio/platformio-core-installer/master/get-platformio.py),
+      run with the system Python 3.13.14 (`python.exe get-platformio.py`).
+      Result: PlatformIO Core 6.1.19 in a venv at `C:\Users\pakme\.platformio\penv`;
+      added `C:\Users\pakme\.platformio\penv\Scripts` to the user PATH so `pio`
+      resolves in both PowerShell and bash. CLI only, no VS Code extension.
+
+      Investigated RAK's official BSP patch (RAK_PATCH_V2, from
+      github.com/RAKWireless/WisBlock/tree/master/PlatformIO) before applying it:
+      it drops a project-local `rakwireless/` folder with board JSON + variant
+      files (variant folder literally named `rak4630`) and expects
+      `board = rak4630` in platformio.ini. This MeshCore fork does not use that
+      mechanism at all: it ships its own `boards/rak4631.json`
+      (`"variant": "WisCore_RAK4631_Board"`) and `variants/rak4631/` in the repo
+      root, and pins a custom Arduino core fork via `platform_packages` in the
+      root platformio.ini (`nrf52_base`):
+      `framework-arduinoadafruitnrf52 @ https://github.com/meshcore-dev/Adafruit_nRF52_Arduino#d541301`.
+      Checked that fork's `variants/` directory on GitHub at commit d541301 -
+      no `WisCore_RAK4631_Board` folder exists there either (that folder only
+      exists in RAKWireless/RAK-nRF52-Arduino, RAK's full separate BSP, which is
+      NOT what this repo references).
+
+      Tested empirically instead of assuming: ran `pio run -e RAK_4631_sensor`
+      with zero manual patching. Build succeeded, RAM/flash report printed,
+      confirmed via `pio pkg list` that the installed
+      `framework-arduinoadafruitnrf52` is version 1.10701.0 (meshcore-dev fork)
+      and its local `variants/` folder (under
+      `C:\Users\pakme\.platformio\packages\framework-arduinoadafruitnrf52\variants\`)
+      has no RAK entry at all, confirming the build does not depend on the
+      low-level Arduino "variant" folder mechanism for this board - MeshCore's
+      own `RAK4631Board.cpp/h` fully cover board init.
+      **Conclusion: no manual RAK BSP patch step is needed for this fork/repo
+      setup.** CLAUDE.md's "Byggmiljö" section states this as a required known
+      pitfall; flagged to project owner as inaccurate for this specific setup
+      (see chat) rather than silently rewritten, since it touches a documented
+      assumption.
+* [x] Build stock `simple_sensor` for the RAK4631 target with zero errors
+      Built via `pio run -e RAK_4631_sensor` (env defined in
+      `variants/rak4631/platformio.ini`, builds `examples/simple_sensor`).
+      Result: zero errors, zero warnings (build_flags include `-w`, so the
+      compiler's own warnings are suppressed by project config; no PlatformIO/
+      linker errors or warnings either way, checked by grepping the full log
+      for "error"/"warning" - 0 hits both). RAM 12.2% (28712/235520 bytes),
+      Flash 62.9% (512936/815104 bytes). Toolchain: platform nordicnrf52 @
+      10.12.0, toolchain-gccarmnoneeabi @ 1.70201.0. Build artifacts in
+      `.pio/build/RAK_4631_sensor/`: firmware.elf, firmware.hex, firmware.zip
+      (DFU OTA package), and firmware.uf2 (1,026,048 bytes, generated via
+      `pio run -e RAK_4631_sensor -t create_uf2` - this target is not run
+      automatically by a plain `pio run`). UF2 is ready for manual flashing.
 * [ ] Flash and verify boot over serial (115200), note firmware version
 * [ ] Copy examples/simple_sensor to examples/meshbuoy, own env in
       platformio.ini, build again with zero errors
