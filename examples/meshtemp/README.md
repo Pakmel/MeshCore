@@ -1,4 +1,4 @@
-# MeshBuoy
+# MeshTemp
 
 A generic MeshCore water/outdoor temperature sensor node, built as a YouTube project.
 It reads temperature from a DS18B20 probe and pushes it once an hour as a regular
@@ -28,18 +28,18 @@ asynchronously so it never blocks the mesh loop.
 
 Two PlatformIO environments, both defined in `variants/rak4631/platformio.ini`:
 
-* **`RAK_4631_meshbuoy`** — bench-test build. Sends every 2 minutes instead of every
+* **`RAK_4631_meshtemp`** — bench-test build. Sends every 2 minutes instead of every
   hour, USB serial stays up, no deep sleep. Use this for wiring checks, message
   verification, and retry testing.
-* **`RAK_4631_meshbuoy_sleep`** — production build. Identical read/send/retry code,
+* **`RAK_4631_meshtemp_sleep`** — production build. Identical read/send/retry code,
   but sends once per hour and puts the radio to sleep between cycles for
   sub-0.5 mA average current. Flash this one, then run on battery only — USB keeps
   the nRF52 from reaching its lowest sleep current and will skew any power
   measurement.
 
 ```
-pio run -e RAK_4631_meshbuoy
-pio run -e RAK_4631_meshbuoy_sleep
+pio run -e RAK_4631_meshtemp
+pio run -e RAK_4631_meshtemp_sleep
 ```
 
 Flashing: double-tap reset for the bootloader, then copy the built `.uf2` from
@@ -47,19 +47,19 @@ Flashing: double-tap reset for the bootloader, then copy the built `.uf2` from
 
 ## Configuration
 
-All parameters are compile-time constants in `src/meshbuoy_config.h` — there is no
+All parameters are compile-time constants in `src/meshtemp_config.h` — there is no
 remote administration, any change needs a USB reflash:
 
-* `MESHBUOY_CHANNEL_NAME` — the hashtag channel name, including the `#`. Currently
+* `MESHTEMP_CHANNEL_NAME` — the hashtag channel name, including the `#`. Currently
   set to a test value; the final name is decided at release — this constant is the
   only place it lives.
-* `MESHBUOY_SEND_INTERVAL_SECS` — push interval (1 hour)
+* `MESHTEMP_SEND_INTERVAL_SECS` — push interval (1 hour)
 * `RETRY_WINDOW_S` — how long to listen for a repeater echo before retrying
 * `PLAUSIBLE_MIN_C` / `PLAUSIBLE_MAX_C` — plausibility bounds for the reading
 
 ## How the channel name works
 
-MeshBuoy uses a **hashtag channel** — the same mechanism the MeshCore mobile app and
+MeshTemp uses a **hashtag channel** — the same mechanism the MeshCore mobile app and
 MeshMonitor use for quick, no-setup shared channels. There's no separate secrets
 file: the channel name *is* the key material. At boot, the node derives the
 channel's 128-bit key as the first 16 bytes of SHA256 of the channel name string,

@@ -1,5 +1,5 @@
 #include "WaterChannel.h"
-#include "meshbuoy_config.h"
+#include "meshtemp_config.h"
 #include <Utils.h>
 #include <string.h>
 #include <stdio.h>
@@ -7,7 +7,7 @@
 void WaterChannel::begin() {
   memset(channel.secret, 0, sizeof(channel.secret));
   mesh::Utils::sha256(channel.secret, CIPHER_KEY_SIZE,
-                       (const uint8_t*)MESHBUOY_CHANNEL_NAME, strlen(MESHBUOY_CHANNEL_NAME));
+                       (const uint8_t*)MESHTEMP_CHANNEL_NAME, strlen(MESHTEMP_CHANNEL_NAME));
   // 1-byte routing hash, derived the same way BaseChatMesh::setChannel does
   // for a 128-bit (16-byte) secret: sha256 of just the key bytes, not the
   // full zero-padded 32-byte secret buffer.

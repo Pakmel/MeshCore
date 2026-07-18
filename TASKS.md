@@ -1,4 +1,4 @@
-# TASKS – MeshBuoy firmware
+# TASKS – MeshTemp firmware
 
 Persistent session memory for Claude Code. Check off with [x] and add notes
 below each item in the same commit as the code. Never remove items, strike them
@@ -16,11 +16,11 @@ instead.
 
 ## Round 1 – Build environment and baseline (no custom code yet)
 
-* [x] Fork meshcore-dev/MeshCore, clone locally, create branch `meshbuoy`
+* [x] Fork meshcore-dev/MeshCore, clone locally, create branch `meshtemp`
       Fork: https://github.com/Pakmel/MeshCore, cloned 2026-07-15. Upstream main
       at clone time: commit 219812b9 (2026-07-13). Branch created as `badboj`,
-      renamed to `meshbuoy` on 2026-07-15 (project renamed from Badboj to
-      MeshBuoy for public sharing in English); old `badboj` branch deleted on
+      renamed to `meshtemp` on 2026-07-15 (project renamed from Badboj to
+      MeshTemp for public sharing in English); old `badboj` branch deleted on
       origin after the rename push. CLAUDE.md and TASKS.md moved into the repo
       root in the same commit. Note: `C:\Users\pakme` is itself a (likely
       unintentional) empty git repo root with no commits, not touched by this
@@ -91,44 +91,44 @@ instead.
       `RADIOLIB_ERR_CRC_MISMATCH` (confirmed in `RadioLib/src/TypeDef.h`) -
       expected noise from other mesh traffic on a shared frequency, not a
       fault.
-* [x] Copy examples/simple_sensor to examples/meshbuoy, own env in
+* [x] Copy examples/simple_sensor to examples/meshtemp, own env in
       platformio.ini, build again with zero errors
       Copied directory as-is (no internal renames - SensorMesh.cpp/h etc.
       keep their names, only the containing example folder is new). Added
-      `[env:RAK_4631_meshbuoy]` in `variants/rak4631/platformio.ini`,
-      extending `rak4631`, building `+<../examples/meshbuoy>`. Left out
+      `[env:RAK_4631_meshtemp]` in `variants/rak4631/platformio.ini`,
+      extending `rak4631`, building `+<../examples/meshtemp>`. Left out
       `DISPLAY_CLASS=SSD1306Display` (present in the stock `RAK_4631_sensor`
       env) since CLAUDE.md's Hardware section lists no display for this
-      board - RAK19007 baseplate only. Set `ADVERT_NAME` to `"MeshBuoy"`.
-      Built via `pio run -e RAK_4631_meshbuoy`: zero errors, zero warnings
+      board - RAK19007 baseplate only. Set `ADVERT_NAME` to `"MeshTemp"`.
+      Built via `pio run -e RAK_4631_meshtemp`: zero errors, zero warnings
       (grepped full log, 0 hits for both). RAM 12.1% (28488/235520 bytes),
       Flash 60.9% (496376/815104 bytes) - slightly smaller than
       RAK_4631_sensor since the display driver isn't linked in.
-* [x] Create src/meshbuoy_version.h (0.1.0) and src/meshbuoy_config.h with channel
+* [x] Create src/meshtemp_version.h (0.1.0) and src/meshtemp_config.h with channel
       name, interval, and retry window as constants
-      `src/meshbuoy_version.h`: `#define MESHBUOY_VERSION "0.1.0"`.
-      `src/meshbuoy_config.h`: `MESHBUOY_CHANNEL_NAME "#watertemp"` (asked
+      `src/meshtemp_version.h`: `#define MESHTEMP_VERSION "0.1.0"`.
+      `src/meshtemp_config.h`: `MESHTEMP_CHANNEL_NAME "#watertemp"` (asked
       project owner to confirm since CLAUDE.md only gave `#badtemp` as an
       "e.g." example, not a firm decision; `#watertemp` was chosen - English,
-      describes content not project name), `MESHBUOY_SEND_INTERVAL_SECS`
+      describes content not project name), `MESHTEMP_SEND_INTERVAL_SECS`
       (60UL*60UL = 1 hour, per architecture decision), `RETRY_WINDOW_S 30`
       (per CLAUDE.md/TASKS Round 4 starting value). Not yet wired into any
       code - these are declarations only, consumed starting Round 3/4.
 
 ## Round 2 – DS18B20 on WB_IO1
 
-* [x] Add OneWire and DallasTemperature to lib_deps for meshbuoy
+* [x] Add OneWire and DallasTemperature to lib_deps for meshtemp
       Checked actual PlatformIO registry versions instead of guessing:
       `paulstoffregen/OneWire @ ^2.3.8` and `milesburton/DallasTemperature @ ^4.0.6`
       (both current latest at time of writing, confirmed via `pio pkg search`).
-      Added to `lib_deps` of `[env:RAK_4631_meshbuoy]` in
+      Added to `lib_deps` of `[env:RAK_4631_meshtemp]` in
       `variants/rak4631/platformio.ini`.
-* [x] Init 1-Wire bus on WB_IO1 behind build flag MESHBUOY_DS18B20, 9-bit
+* [x] Init 1-Wire bus on WB_IO1 behind build flag MESHTEMP_DS18B20, 9-bit
       resolution, detection check at boot (flag is only set if the probe responds)
-      `-D MESHBUOY_DS18B20=1` added to the env's build_flags. Confirmed
+      `-D MESHTEMP_DS18B20=1` added to the env's build_flags. Confirmed
       `WB_IO1` is defined in this repo's own `variants/rak4631/variant.h`
       (`WB_IO1 = 17`, WisBlock base GPIO) before using it - did not pull the
-      pin number from memory. New `examples/meshbuoy/WaterTempSensor.{h,cpp}`
+      pin number from memory. New `examples/meshtemp/WaterTempSensor.{h,cpp}`
       wraps OneWire+DallasTemperature; `begin()` calls `getDeviceCount()` +
       `getAddress()` and only sets `_detected = true` if a device actually
       answered, then `setResolution(9)`. `main.cpp` setup() logs
@@ -157,7 +157,7 @@ instead.
       `PLAUSIBLE_MIN_C`/`PLAUSIBLE_MAX_C` = -5.0/45.0, sent with a `?` right
       after `C`), and case 3 (sensor error, `ERR(-127)` or `ERR(85)`, no
       temperature figure ever sent). Both constants added to
-      `meshbuoy_config.h`. `WaterTempSensor::readResult()` replaced the old
+      `meshtemp_config.h`. `WaterTempSensor::readResult()` replaced the old
       float-returning `readTempC()`: it reads the RAW scratchpad value via
       `DallasTemperature::getTemp()` rather than `getTempC()`, because this
       library version (4.0.6) already collapses both "disconnected" and
@@ -175,13 +175,13 @@ instead.
 * [x] Version 0.2.0
       Bumped ahead of the hardware verification above, per explicit
       project-owner instruction: code builds with zero errors/warnings
-      (`pio run -e RAK_4631_meshbuoy`), so the version bump gate in
+      (`pio run -e RAK_4631_meshtemp`), so the version bump gate in
       CLAUDE.md's "Versioning" section is satisfied even though the
       DS18B20 accuracy check against a reference thermometer is still
-      pending. `src/meshbuoy_version.h` updated to `"0.2.0"`. Also noticed
+      pending. `src/meshtemp_version.h` updated to `"0.2.0"`. Also noticed
       CLAUDE.md already claimed "the version is written to serial at boot"
       but nothing actually printed it - wired that up now
-      (`Serial.println(MESHBUOY_VERSION)` in `main.cpp` setup(), right
+      (`Serial.println(MESHTEMP_VERSION)` in `main.cpp` setup(), right
       after `Serial.begin()`) so the claim is true rather than aspirational.
 
 ## Weekend hardware pass
@@ -192,7 +192,7 @@ weekends and pastes results back.
 * [ ] Connect DS18B20 to the RAK4631: VDD -> 3.3V, GND -> GND, data -> WB_IO1,
       with a 4.7k pullup resistor between data and VDD (see CLAUDE.md Hardware).
 * [ ] Double-tap reset for bootloader, copy
-      `.pio/build/RAK_4631_meshbuoy/firmware.uf2` to the drive that appears
+      `.pio/build/RAK_4631_meshtemp/firmware.uf2` to the drive that appears
       (labeled `RAK4631` last time, e.g. `E:\`).
 * [ ] Open a serial terminal at 115200 baud **before** resetting again, so the
       boot lines aren't missed (RAK4631's USB CDC doesn't buffer).
@@ -209,8 +209,8 @@ weekends and pastes results back.
 * [ ] Confirm boot also logs `[channel key self-check] #test -> ... PASS`
       (see Round 3) - if it says FAIL, stop and report back before trusting
       any channel message, something is wrong with the key derivation.
-* [ ] In the MeshCore mobile app, add a channel matching `MESHBUOY_CHANNEL_NAME`
-      in `src/meshbuoy_config.h` byte-for-byte, including the `#` (currently
+* [ ] In the MeshCore mobile app, add a channel matching `MESHTEMP_CHANNEL_NAME`
+      in `src/meshtemp_config.h` byte-for-byte, including the `#` (currently
       `#tempsensortest` - see note below, name may still change before release).
 * [ ] Watch for `[channel send] Water: ...` lines every 2 minutes in serial,
       and confirm the same message shows up in the app's channel via at least
@@ -225,7 +225,7 @@ weekends and pastes results back.
       `[retry] repeat heard` instead, well before the 30s window elapses.
       Note actual timing observed here.
 * [ ] Sleep-cycle power measurement (Round 5): flash
-      `RAK_4631_meshbuoy_sleep` (not the bench-test env), then disconnect
+      `RAK_4631_meshtemp_sleep` (not the bench-test env), then disconnect
       USB entirely and run on battery power only - USB CDC keeps the nRF52
       from ever reaching its lowest sleep current and will skew any
       measurement taken over USB. Use a multimeter or PPK in series with
@@ -252,7 +252,7 @@ weekends and pastes results back.
       no new crypto library pulled in. No existing code derives a
       `GroupChannel` key from a hashtag name (that pattern only existed for
       the unrelated `TransportKeyStore` region-key feature), so
-      `WaterChannel::begin()` (new `examples/meshbuoy/WaterChannel.{h,cpp}`)
+      `WaterChannel::begin()` (new `examples/meshtemp/WaterChannel.{h,cpp}`)
       implements it fresh, mirroring `BaseChatMesh::setChannel`'s 128-bit-key
       path exactly: `channel.secret[0..16)` = sha256(channel name),
       `secret[16..32)` zeroed, `channel.hash` (1 byte) = sha256(secret, 16).
@@ -269,16 +269,16 @@ weekends and pastes results back.
       '9cd8fcf22a47333b591d96a2b848b73f'` - confirmed true), so the
       algorithm is verified correct even before the on-device check has been
       run for real.
-* [x] Set channel name in meshbuoy_config.h, add the same hashtag channel in the
+* [x] Set channel name in meshtemp_config.h, add the same hashtag channel in the
       mobile app
-      Channel name (`#watertemp`) was already set in `meshbuoy_config.h`
+      Channel name (`#watertemp`) was already set in `meshtemp_config.h`
       during Round 1. Adding it in the mobile app is a manual step - see
       "Weekend hardware pass" below.
 
       **Update:** changed to `#tempsensortest` (project-owner instruction,
       scope change to a generic sensor node - see CLAUDE.md). The final
       channel name is not locked in - it's decided at release, and
-      `MESHBUOY_CHANNEL_NAME` in `src/meshbuoy_config.h` remains the only
+      `MESHTEMP_CHANNEL_NAME` in `src/meshtemp_config.h` remains the only
       place it lives, so it can keep changing without touching any other
       file.
 
@@ -286,8 +286,8 @@ weekends and pastes results back.
       without running the `create_uf2` target or checking file timestamps -
       no new `.uf2` actually existed, only `.elf`/`.hex` (see Round 1's own
       note that `pio run` alone doesn't produce a `.uf2`). Caught and
-      corrected: re-ran `pio run -e RAK_4631_meshbuoy -t create_uf2` and
-      `pio run -e RAK_4631_meshbuoy_sleep -t create_uf2`, both SUCCESS,
+      corrected: re-ran `pio run -e RAK_4631_meshtemp -t create_uf2` and
+      `pio run -e RAK_4631_meshtemp_sleep -t create_uf2`, both SUCCESS,
       confirmed `.pio\build\<env>\firmware.uf2` timestamps are current and
       `tempsensortest` (via `grep -a -o`) is present in both `.uf2` files.
       New working rule added above so this doesn't happen again.
@@ -305,9 +305,9 @@ weekends and pastes results back.
       `SensorMesh`/`MyMesh` already extend, so no new base class needed.
 * [x] Test interval 2 minutes, verify the message appears in the app via at least
       one repeater (not just direct link)
-      Code side done: sends every 2 minutes (`MESHBUOY_TEST_SEND_INTERVAL_MS`,
+      Code side done: sends every 2 minutes (`MESHTEMP_TEST_SEND_INTERVAL_MS`,
       local to `main.cpp`, distinct from the real hourly
-      `MESHBUOY_SEND_INTERVAL_SECS` in `meshbuoy_config.h` which is Round 5's
+      `MESHTEMP_SEND_INTERVAL_SECS` in `meshtemp_config.h` which is Round 5's
       job). App-side verification is manual - see "Weekend hardware pass".
 * [ ] Verify in the MeshMonitor channel feed
       Manual - see "Weekend hardware pass" below.
@@ -315,7 +315,7 @@ weekends and pastes results back.
       Bumped ahead of the app/MeshMonitor verification above, same
       rationale as the 0.2.0 bump: hardware/app passes happen on weekends,
       code builds with zero errors/warnings
-      (`pio run -e RAK_4631_meshbuoy`). `src/meshbuoy_version.h` updated to
+      (`pio run -e RAK_4631_meshtemp`). `src/meshtemp_version.h` updated to
       `"0.3.0"`.
 
 ## Round 4 – Retry via own echo
@@ -334,13 +334,13 @@ weekends and pastes results back.
       mechanism, different purpose here. New `MyMesh::logRx()` override in
       `main.cpp` feeds `Packet::calculatePacketHash()` (existing primitive,
       `src/Packet.cpp`, SHA256 of payload type + payload bytes) into a new
-      `EchoRetry` class (`examples/meshbuoy/EchoRetry.{h,cpp}`) that just
+      `EchoRetry` class (`examples/meshtemp/EchoRetry.{h,cpp}`) that just
       holds the armed hash, a millis()-timed deadline, and an echo-heard
       flag - no Mesh dependency, easy to reason about independently. No
       explicit "stay in RX" code needed: confirmed the Dispatcher's normal
       `loop()`/`checkRecv()` re-arms `startReceive()` automatically once
       idle after a TX completes, as long as nothing calls radio/board sleep
-      during the window - which nothing in meshbuoy does yet (that's
+      during the window - which nothing in meshtemp does yet (that's
       Round 5's job, and it will need to respect this window, see the
       Round 5 plan).
 * [x] No repeat heard: resend ONCE, then done regardless
@@ -348,7 +348,7 @@ weekends and pastes results back.
       gates this: on window expiry with no echo, `echo_retry.disarm()` is
       called *before* the retry send (so the retry's own transmission can
       never re-trigger this branch), then exactly one
-      `meshbuoySendChannelData()` call resends the cached `pending_data`
+      `meshtempSendChannelData()` call resends the cached `pending_data`
       bytes (same timestamp, same message - a real retry of the same
       attempt, not a fresh reading). State returns to IDLE immediately
       after, regardless of whether the retry send itself succeeded - no
@@ -365,7 +365,7 @@ weekends and pastes results back.
 * [x] Version 0.4.0
       Bumped ahead of the field test above, same rationale as 0.2.0/0.3.0:
       code builds with zero errors/warnings
-      (`pio run -e RAK_4631_meshbuoy`). `src/meshbuoy_version.h` updated to
+      (`pio run -e RAK_4631_meshtemp`). `src/meshtemp_version.h` updated to
       `"0.4.0"`.
 
 ## Round 5 – Sleep cycle and power budget
@@ -395,30 +395,30 @@ weekends and pastes results back.
       feature.
 * [x] Sequence: wake, start DS18B20 conversion, read battery, send, retry window,
       sleep. Total awake time under 60 s per hour
-      Major refactor of `examples/meshbuoy/main.cpp` to satisfy the hard
-      project requirement that `RAK_4631_meshbuoy` (bench test) and
-      `RAK_4631_meshbuoy_sleep` (new, production) envs share byte-identical
+      Major refactor of `examples/meshtemp/main.cpp` to satisfy the hard
+      project requirement that `RAK_4631_meshtemp` (bench test) and
+      `RAK_4631_meshtemp_sleep` (new, production) envs share byte-identical
       read/send/retry code, differing only in the scheduler layer and the
       interval constant (verified: grepped the file for
-      `MESHBUOY_SLEEP_CYCLE`, all 4 hits are cleanly isolated to
+      `MESHTEMP_SLEEP_CYCLE`, all 4 hits are cleanly isolated to
       scheduler-only code - test-only timer state, the sleep/reinit helper
-      functions, and the two loop() scheduler branches; `meshbuoyStartCycle()`/
-      `meshbuoyCycleTick()`/`meshbuoyCycleIdle()` and everything they call
+      functions, and the two loop() scheduler branches; `meshtempStartCycle()`/
+      `meshtempCycleTick()`/`meshtempCycleIdle()` and everything they call
       are entirely unconditional). Fixed interval counted from cycle
       *start* (`cycle_started_at`), per project decision - avoids drift
       when a cycle needs the full retry window. First cycle now runs
       immediately at the end of setup() in both envs (was previously
       test-env-only timer-based).
 
-      New production env `RAK_4631_meshbuoy_sleep` in
-      `variants/rak4631/platformio.ini`: `extends = env:RAK_4631_meshbuoy`,
+      New production env `RAK_4631_meshtemp_sleep` in
+      `variants/rak4631/platformio.ini`: `extends = env:RAK_4631_meshtemp`,
       build_flags = the base env's build_flags plus exactly one new define
-      (`MESHBUOY_SLEEP_CYCLE=1`) - nothing else differs.
+      (`MESHTEMP_SLEEP_CYCLE=1`) - nothing else differs.
 
       Also fixed a latent gap while refactoring: previously, if the
       DS18B20 was never detected at boot, the periodic send simply never
       happened - CLAUDE.md's case 3 ("probe not responding") was
-      unreachable for that specific fault. `meshbuoyStartCycle()` now
+      unreachable for that specific fault. `meshtempStartCycle()` now
       always runs the cycle regardless of `water_sensor.detected()`,
       sending an immediate `ERR(-127)` when there's no probe, so a wiring
       fault is visible on the mesh instead of the node going silent
@@ -441,38 +441,91 @@ weekends and pastes results back.
       (resets that tracking to IDLE) and reapplying
       `radio_driver.setParams()`/`setTxPower()` from
       `the_mesh.getNodePrefs()` on every wake - see
-      `meshbuoyReinitRadioAfterSleep()`. Actual current measurement is a
+      `meshtempReinitRadioAfterSleep()`. Actual current measurement is a
       hardware step - see "Weekend hardware pass".
 * [ ] Note measured values here: sleep mA, RX mA, TX peak, average
       Pending - see "Weekend hardware pass".
 * [x] Version 0.5.0
       Code builds with zero errors/warnings in both
-      `RAK_4631_meshbuoy` and `RAK_4631_meshbuoy_sleep`.
-      `src/meshbuoy_version.h` updated to `"0.5.0"`. Actual power
+      `RAK_4631_meshtemp` and `RAK_4631_meshtemp_sleep`.
+      `src/meshtemp_version.h` updated to `"0.5.0"`. Actual power
       measurement pending (see above) - same "code clean, hardware
       pending" pattern as 0.2.0-0.4.0.
 * [x] `ver` CLI command distinguishable from stock firmware
-      The stock `FIRMWARE_VERSION` in `examples/meshbuoy/SensorMesh.h` was
+      The stock `FIRMWARE_VERSION` in `examples/meshtemp/SensorMesh.h` was
       still the literal upstream string `"v1.16.0"` - identical to what
       unmodified simple_sensor reports, so `ver` gave no way to tell a
-      MeshBuoy node from stock firmware over serial. Renamed the upstream
+      MeshTemp node from stock firmware over serial. Renamed the upstream
       value to `MESHCORE_UPSTREAM_VERSION` (kept as its own constant, not
       deleted) and redefined `FIRMWARE_VERSION` as
-      `"MeshBuoy " MESHBUOY_VERSION " (MeshCore " MESHCORE_UPSTREAM_VERSION ")"`,
-      built from `MESHBUOY_VERSION` in `src/meshbuoy_version.h` (the
+      `"MeshTemp " MESHTEMP_VERSION " (MeshCore " MESHCORE_UPSTREAM_VERSION ")"`,
+      built from `MESHTEMP_VERSION` in `src/meshtemp_version.h` (the
       project's single version source, see CLAUDE.md "Versioning") so it
       can't drift out of sync. `ver` now answers
-      `MeshBuoy 0.5.0 (MeshCore v1.16.0) (Build: 6 Jun 2026)` - the
+      `MeshTemp 0.5.0 (MeshCore v1.16.0) (Build: 6 Jun 2026)` - the
       trailing `(Build: ...)` group comes from `CommonCLI.cpp`'s existing
       `sprintf("%s (Build: %s)", ...)`, which was deliberately left
       untouched (shared file, out of scope) rather than merged into one
       parenthesized group, to keep upstream merges clean.
-      Rebuilt both `RAK_4631_meshbuoy` and `RAK_4631_meshbuoy_sleep`
+      Rebuilt both `RAK_4631_meshtemp` and `RAK_4631_meshtemp_sleep`
       (`-t create_uf2`): both SUCCESS, zero errors/warnings, new
       `firmware.uf2` timestamps confirmed current in both
       `.pio\build\<env>\` dirs, and the string
-      `MeshBuoy 0.5.0 (MeshCore v1.16.0)` confirmed present (via
+      `MeshTemp 0.5.0 (MeshCore v1.16.0)` confirmed present (via
       `grep -a -o`) in both `.uf2` files.
+
+## Rename – MeshBuoy to MeshTemp (2026-07-18)
+
+* [x] Rename project from MeshBuoy to MeshTemp - scope is a generic MeshCore
+      temperature sensor, the name should match (buoy enclosure remains a
+      possible follow-up, see CLAUDE.md "Future: buoy enclosure", not deleted)
+      Branch: `git branch -m meshbuoy meshtemp`, pushed as `meshtemp` to
+      origin, old `meshbuoy` branch deleted on origin (same pattern as the
+      earlier `badboj` -> `meshbuoy` branch rename in Round 1).
+
+      Files/folders: `src/meshbuoy_config.h` -> `src/meshtemp_config.h`,
+      `src/meshbuoy_version.h` -> `src/meshtemp_version.h`,
+      `examples/meshbuoy/` -> `examples/meshtemp/` (all via `git mv`, history
+      preserved). All `MESHBUOY_*` macros renamed to `MESHTEMP_*`
+      (`MESHTEMP_VERSION`, `MESHTEMP_DS18B20`, `MESHTEMP_SLEEP_CYCLE`,
+      `MESHTEMP_CHANNEL_NAME`, `MESHTEMP_MSG_MAX_LEN`,
+      `MESHTEMP_SEND_INTERVAL_SECS`, `MESHTEMP_TEST_SEND_INTERVAL_MS`,
+      `MESHTEMP_TEST_READ_INTERVAL_MS`), all `meshbuoy*` function/file names
+      to `meshtemp*` (e.g. `meshbuoySendChannelData` ->
+      `meshtempSendChannelData`), and all `MeshBuoy`/`meshbuoy`/`MESHBUOY`
+      prose in CLAUDE.md, TASKS.md, and the README to `MeshTemp`/`meshtemp`/
+      `MESHTEMP`. Confirmed with `grep -rli meshbuoy` across the repo after
+      the rename: zero hits. Standalone "buoy" (the "Future: buoy enclosure"
+      section and its Parked-list pointer) was deliberately left untouched -
+      only the project-name token changed.
+
+      **Note on `MESHTEMP_DEFAULT_NAME`:** there was never a macro by that
+      name (or `MESHBUOY_DEFAULT_NAME`) - the default node name has always
+      come from the generic `ADVERT_NAME` build flag in
+      `variants/rak4631/platformio.ini`, shared verbatim with every other
+      example/env in this repo (`RAK_4631_repeater`, `RAK_4631_sensor`,
+      etc.), not something this project owns or should rename. Its value
+      changed from `"MeshBuoy"` to `"MeshTemp"` via the same blanket rename
+      above, satisfying "the default node name constant becomes MeshTemp"
+      without introducing an unused parallel constant that platformio.ini
+      (plain text, no C preprocessor) couldn't actually source from a
+      header anyway.
+
+      Envs renamed `RAK_4631_meshbuoy` -> `RAK_4631_meshtemp`,
+      `RAK_4631_meshbuoy_sleep` -> `RAK_4631_meshtemp_sleep`. Both rebuilt
+      clean from scratch (new env names -> new `.pio/build/` dirs, full
+      rebuild, ~2.5 min and ~1.5 min respectively): `RAK_4631_meshtemp`
+      SUCCESS in 145.6s, `RAK_4631_meshtemp_sleep` SUCCESS in 96.4s, zero
+      real compiler/linker errors or warnings (grepped both full logs;
+      the only regex hits were a `git` package-manager note about a
+      non-commit tag ref while fetching an unrelated library dependency,
+      and the filename `SensirionErrors.cpp` - neither is a build error).
+      Both `firmware.uf2` confirmed written just now (timestamps
+      2026-07-18 11:27:29 and 11:29:30, checked at 11:29:39) at
+      `.pio\build\RAK_4631_meshtemp\firmware.uf2` and
+      `.pio\build\RAK_4631_meshtemp_sleep\firmware.uf2`. String
+      `MeshTemp 0.5.0 (MeshCore v1.16.0)` confirmed present (`grep -a -o`)
+      in both.
 
 ## Round 6 – Field test before deployment
 

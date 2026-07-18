@@ -1,5 +1,5 @@
 #include "WaterTempSensor.h"
-#include "meshbuoy_config.h"
+#include "meshtemp_config.h"
 
 #define DS18B20_RESOLUTION_BITS 9
 

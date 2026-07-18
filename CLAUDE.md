@@ -1,4 +1,4 @@
-# MeshBuoy – MeshCore water/outdoor temperature sensor with channel push
+# MeshTemp – MeshCore water/outdoor temperature sensor with channel push
 
 ## What this is
 
@@ -12,7 +12,7 @@ is out of scope for now — see "Future: buoy enclosure" at the bottom. For now 
 bench/field node running on battery.
 
 This is a fork of meshcore-dev/MeshCore. The base is the `examples/simple_sensor` example,
-copied to a dedicated example `examples/meshbuoy` so that upstream merges stay clean.
+copied to a dedicated example `examples/meshtemp` so that upstream merges stay clean.
 
 ## Architecture decisions (do not change without discussion)
 
@@ -29,7 +29,7 @@ copied to a dedicated example `examples/meshbuoy` so that upstream merges stay c
   Temperature with one decimal, voltage with two decimals.
 
   Case 2, implausible but real reading (outside `PLAUSIBLE_MIN_C`..`PLAUSIBLE_MAX_C`,
-  defined in `meshbuoy_config.h` as -5.0 and 45.0): `Water: 52.3C? Batt: 3.91V`
+  defined in `meshtemp_config.h` as -5.0 and 45.0): `Water: 52.3C? Batt: 3.91V`
   The value is still sent, with a `?` directly after `C` as the uncertainty marker.
 
   Case 3, sensor error, no temperature figure is ever sent:
@@ -43,7 +43,7 @@ copied to a dedicated example `examples/meshbuoy` so that upstream merges stay c
 * **System ON sleep, not SYSTEMOFF.** The RTC must survive the sleep so that timestamps
   and intervals hold. Wakeup via RTC timer.
 * **No remote administration.** Configuration changes require USB. All parameters,
-  including the channel name, are compile-time constants in `src/meshbuoy_config.h`.
+  including the channel name, are compile-time constants in `src/meshtemp_config.h`.
 
 ## Hardware
 
@@ -56,11 +56,11 @@ copied to a dedicated example `examples/meshbuoy` so that upstream merges stay c
 
 ## Radio
 
-Same preset as the KSD network in Karlstad (EU/UK). Values go in meshbuoy_config.h and
+Same preset as the KSD network in Karlstad (EU/UK). Values go in meshtemp_config.h and
 are verified against an existing KSD node before the first field test.
 
 **Channel: hashtag channel.** The channel name (e.g. `#badtemp`) is a compile-time constant
-in meshbuoy_config.h. The key is derived at boot as the first 16 bytes of SHA256 of the
+in meshtemp_config.h. The key is derived at boot as the first 16 bytes of SHA256 of the
 full name including #, exactly the same derivation the MeshCore apps use. No secrets file
 is needed, the name is the key. Verify the derivation against a known example:
 `#test` should give the key `9cd8fcf22a47333b591d96a2b848b73f`. Use MeshCore's own
@@ -75,7 +75,7 @@ on 869 MHz. The retry window must never trigger more than one retransmission.
 
 ## Versioning
 
-* Single source: `src/meshbuoy_version.h` with `#define MESHBUOY_VERSION "0.1.0"`
+* Single source: `src/meshtemp_version.h` with `#define MESHTEMP_VERSION "0.1.0"`
 * Major stays at 0 until the definition of "done" below is fulfilled — only then
   does the version become 1.0.0.
 * While major is 0 (0.x): patch is for bugfixes only. Minor covers every other
