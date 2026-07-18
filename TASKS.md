@@ -4,6 +4,16 @@ Persistent session memory for Claude Code. Check off with [x] and add notes
 below each item in the same commit as the code. Never remove items, strike them
 instead.
 
+## Working rules
+
+* A report of a successful build must always be accompanied by the build output
+  (last lines, including the SUCCESS line) and the resulting files' timestamps.
+  `pio run` alone does not produce a `.uf2` - that needs the `create_uf2` target
+  run explicitly (see Round 1 note below) - so "build succeeded" is not proof a
+  new `.uf2` exists. Incident: a rebuild was reported after the channel rename
+  to `#tempsensortest` without actually running `create_uf2` or checking the
+  `.uf2` timestamp, so no new flashable file existed despite the claim.
+
 ## Round 1 – Build environment and baseline (no custom code yet)
 
 * [x] Fork meshcore-dev/MeshCore, clone locally, create branch `meshbuoy`
@@ -266,12 +276,21 @@ weekends and pastes results back.
       "Weekend hardware pass" below.
 
       **Update:** changed to `#tempsensortest` (project-owner instruction,
-      scope change to a generic sensor node - see CLAUDE.md). Both
-      `RAK_4631_meshbuoy` and `RAK_4631_meshbuoy_sleep` rebuilt clean
-      (zero errors/warnings) against the new value. The final channel name
-      is not locked in - it's decided at release, and `MESHBUOY_CHANNEL_NAME`
-      in `src/meshbuoy_config.h` remains the only place it lives, so it can
-      keep changing without touching any other file.
+      scope change to a generic sensor node - see CLAUDE.md). The final
+      channel name is not locked in - it's decided at release, and
+      `MESHBUOY_CHANNEL_NAME` in `src/meshbuoy_config.h` remains the only
+      place it lives, so it can keep changing without touching any other
+      file.
+
+      First rebuild report (zero errors/warnings, both envs) was made
+      without running the `create_uf2` target or checking file timestamps -
+      no new `.uf2` actually existed, only `.elf`/`.hex` (see Round 1's own
+      note that `pio run` alone doesn't produce a `.uf2`). Caught and
+      corrected: re-ran `pio run -e RAK_4631_meshbuoy -t create_uf2` and
+      `pio run -e RAK_4631_meshbuoy_sleep -t create_uf2`, both SUCCESS,
+      confirmed `.pio\build\<env>\firmware.uf2` timestamps are current and
+      `tempsensortest` (via `grep -a -o`) is present in both `.uf2` files.
+      New working rule added above so this doesn't happen again.
 * [x] Implement sending of PAYLOAD_TYPE_GRP_TXT with the format
       `Water: 18.5C Batt: 3.91V` (contract, see CLAUDE.md)
       `WaterChannel::formatMessage()` is now the single place that turns a
@@ -432,6 +451,28 @@ weekends and pastes results back.
       `src/meshbuoy_version.h` updated to `"0.5.0"`. Actual power
       measurement pending (see above) - same "code clean, hardware
       pending" pattern as 0.2.0-0.4.0.
+* [x] `ver` CLI command distinguishable from stock firmware
+      The stock `FIRMWARE_VERSION` in `examples/meshbuoy/SensorMesh.h` was
+      still the literal upstream string `"v1.16.0"` - identical to what
+      unmodified simple_sensor reports, so `ver` gave no way to tell a
+      MeshBuoy node from stock firmware over serial. Renamed the upstream
+      value to `MESHCORE_UPSTREAM_VERSION` (kept as its own constant, not
+      deleted) and redefined `FIRMWARE_VERSION` as
+      `"MeshBuoy " MESHBUOY_VERSION " (MeshCore " MESHCORE_UPSTREAM_VERSION ")"`,
+      built from `MESHBUOY_VERSION` in `src/meshbuoy_version.h` (the
+      project's single version source, see CLAUDE.md "Versioning") so it
+      can't drift out of sync. `ver` now answers
+      `MeshBuoy 0.5.0 (MeshCore v1.16.0) (Build: 6 Jun 2026)` - the
+      trailing `(Build: ...)` group comes from `CommonCLI.cpp`'s existing
+      `sprintf("%s (Build: %s)", ...)`, which was deliberately left
+      untouched (shared file, out of scope) rather than merged into one
+      parenthesized group, to keep upstream merges clean.
+      Rebuilt both `RAK_4631_meshbuoy` and `RAK_4631_meshbuoy_sleep`
+      (`-t create_uf2`): both SUCCESS, zero errors/warnings, new
+      `firmware.uf2` timestamps confirmed current in both
+      `.pio\build\<env>\` dirs, and the string
+      `MeshBuoy 0.5.0 (MeshCore v1.16.0)` confirmed present (via
+      `grep -a -o`) in both `.uf2` files.
 
 ## Round 6 – Field test before deployment
 

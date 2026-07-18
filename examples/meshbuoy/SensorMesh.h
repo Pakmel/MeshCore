@@ -37,8 +37,19 @@
   #define FIRMWARE_BUILD_DATE   "6 Jun 2026"
 #endif
 
+// Upstream MeshCore firmware version this fork is based on (the stock value
+// simple_sensor's own FIRMWARE_VERSION would have used). Only bump this if
+// the upstream base is updated - it is NOT MESHBUOY_VERSION.
+#define MESHCORE_UPSTREAM_VERSION "v1.16.0"
+
+#include "meshbuoy_version.h"
+
+// `ver` (see CommonCLI.cpp) reports getFirmwareVer(), i.e. this string - make
+// it identify MeshBuoy and its own version, not just the upstream MeshCore
+// version, which is otherwise indistinguishable from stock firmware.
+// Sourced from MESHBUOY_VERSION in meshbuoy_version.h so it can't drift.
 #ifndef FIRMWARE_VERSION
-  #define FIRMWARE_VERSION   "v1.16.0"
+  #define FIRMWARE_VERSION   "MeshBuoy " MESHBUOY_VERSION " (MeshCore " MESHCORE_UPSTREAM_VERSION ")"
 #endif
 
 #define FIRMWARE_ROLE "sensor"
