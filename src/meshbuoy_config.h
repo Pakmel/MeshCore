@@ -6,7 +6,7 @@
 
 // Hashtag channel name, including the '#'. The channel key is derived at
 // boot as the first 16 bytes of SHA256 of this exact string.
-#define MESHBUOY_CHANNEL_NAME "#watertemp"
+#define MESHBUOY_CHANNEL_NAME "#tempsensortest"
 
 // Push interval: once per hour.
 #define MESHBUOY_SEND_INTERVAL_SECS (60UL * 60UL)

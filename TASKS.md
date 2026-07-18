@@ -199,15 +199,14 @@ weekends and pastes results back.
 * [ ] Confirm boot also logs `[channel key self-check] #test -> ... PASS`
       (see Round 3) - if it says FAIL, stop and report back before trusting
       any channel message, something is wrong with the key derivation.
-* [ ] In the MeshCore mobile app, add a channel named exactly `#watertemp`
-      (must match `MESHBUOY_CHANNEL_NAME` in `src/meshbuoy_config.h`
-      byte-for-byte, including the `#`).
+* [ ] In the MeshCore mobile app, add a channel matching `MESHBUOY_CHANNEL_NAME`
+      in `src/meshbuoy_config.h` byte-for-byte, including the `#` (currently
+      `#tempsensortest` - see note below, name may still change before release).
 * [ ] Watch for `[channel send] Water: ...` lines every 2 minutes in serial,
-      and confirm the same message shows up in the app's `#watertemp`
-      channel via at least one KSD repeater (not just a direct link to your
-      phone).
+      and confirm the same message shows up in the app's channel via at least
+      one KSD repeater (not just a direct link to your phone).
 * [ ] Verify the message also shows up in the MeshMonitor channel feed for
-      `#watertemp`.
+      that channel.
 * [ ] Retry field test (Round 4): temporarily power off/move out of range
       the nearest KSD repeater, then watch serial for a full send cycle.
       Expect `[channel send] ...` followed by `[retry] retry sent` roughly
@@ -265,6 +264,14 @@ weekends and pastes results back.
       Channel name (`#watertemp`) was already set in `meshbuoy_config.h`
       during Round 1. Adding it in the mobile app is a manual step - see
       "Weekend hardware pass" below.
+
+      **Update:** changed to `#tempsensortest` (project-owner instruction,
+      scope change to a generic sensor node - see CLAUDE.md). Both
+      `RAK_4631_meshbuoy` and `RAK_4631_meshbuoy_sleep` rebuilt clean
+      (zero errors/warnings) against the new value. The final channel name
+      is not locked in - it's decided at release, and `MESHBUOY_CHANNEL_NAME`
+      in `src/meshbuoy_config.h` remains the only place it lives, so it can
+      keep changing without touching any other file.
 * [x] Implement sending of PAYLOAD_TYPE_GRP_TXT with the format
       `Water: 18.5C Batt: 3.91V` (contract, see CLAUDE.md)
       `WaterChannel::formatMessage()` is now the single place that turns a

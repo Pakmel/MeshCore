@@ -50,7 +50,9 @@ Flashing: double-tap reset for the bootloader, then copy the built `.uf2` from
 All parameters are compile-time constants in `src/meshbuoy_config.h` — there is no
 remote administration, any change needs a USB reflash:
 
-* `MESHBUOY_CHANNEL_NAME` — the hashtag channel name, including the `#`
+* `MESHBUOY_CHANNEL_NAME` — the hashtag channel name, including the `#`. Currently
+  set to a test value; the final name is decided at release — this constant is the
+  only place it lives.
 * `MESHBUOY_SEND_INTERVAL_SECS` — push interval (1 hour)
 * `RETRY_WINDOW_S` — how long to listen for a repeater echo before retrying
 * `PLAUSIBLE_MIN_C` / `PLAUSIBLE_MAX_C` — plausibility bounds for the reading
