@@ -429,10 +429,6 @@ weekends and pastes results back.
 ## Round 6 – Field test before deployment
 
 * [ ] 48 h dry test on balcony on battery only, all hourly transmissions received
-* [ ] Solar panels connected, verify charging (red LED / rising voltage)
-* [ ] Open-circuit voltage per panel measured in full sunlight, under 5.5 V after
-      diode
-* [ ] Deployment in water temperature environment, verify link via KSD repeater
 * [ ] Version 1.0.0 when the definition of done in CLAUDE.md is fulfilled
 
 ## Parked / later
@@ -440,3 +436,9 @@ weekends and pastes results back.
 * [ ] Parsing in Home Assistant into a real sensor entity (regex on channel message)
 * [ ] Winter test: icing, battery in cold
 * [ ] Possible YouTube video when 1.0.0 is in the water
+* [ ] Buoy enclosure (parked with scope change, see CLAUDE.md "Future: buoy enclosure"):
+  * [ ] Solar panels connected, verify charging (red LED / rising voltage)
+  * [ ] Open-circuit voltage per panel measured in full sunlight, under 5.5 V after
+        diode
+  * [ ] Deployment in water/lake environment, verify link via KSD repeater
+  * [ ] Floating/self-righting enclosure design

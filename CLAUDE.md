@@ -1,11 +1,15 @@
-# MeshBuoy – MeshCore water temperature sensor with channel push
+# MeshBuoy – MeshCore water/outdoor temperature sensor with channel push
 
 ## What this is
 
-A floating bath thermometer for Lake Vänern/Karlstad. A RAK4631 on a RAK19007 baseplate
-reads water temperature with a DS18B20 and pushes the value once an hour as a regular
-encrypted channel message through the KSD MeshCore network. The node sleeps deeply between
-transmissions.
+A generic MeshCore water/outdoor temperature sensor node, built as a YouTube project.
+A RAK4631 on a RAK19007 baseplate reads temperature with a DS18B20 and pushes the value
+once an hour as a regular encrypted channel message through the KSD MeshCore network.
+The node sleeps deeply between transmissions.
+
+The buoy enclosure (floating housing, self-righting, solar charging, lake deployment)
+is out of scope for now — see "Future: buoy enclosure" at the bottom. For now this is a
+bench/field node running on battery.
 
 This is a fork of meshcore-dev/MeshCore. The base is the `examples/simple_sensor` example,
 copied to a dedicated example `examples/meshbuoy` so that upstream merges stay clean.
@@ -49,9 +53,6 @@ copied to a dedicated example `examples/meshbuoy` so that upstream merges stay c
   The conversion must not block the mesh loop, must start asynchronously and must not
   sleep during the wait.
 * Battery voltage via board.getBattMilliVolts() (already present in SensorMesh)
-* 4x solar panels in parallel (approx. 30 mA each, verified measurement, not the
-  advertised 300 mA) into the P1 solar connector. Charge range 4.4 to 5.5 V, Schottky
-  diode per panel.
 
 ## Radio
 
@@ -106,6 +107,22 @@ on 869 MHz. The retry window must never trigger more than one retransmission.
 
 ## Definition of "done"
 
-The node sits in the water, sends the correct temperature every full hour to the
-channel, is visible in MeshMonitor via at least one KSD repeater, and average
-consumption is measured under 0.5 mA over 24 hours.
+The node runs on battery, sends the correct temperature to the channel every hour
+through at least one repeater, with measured average current below 0.5 mA.
+
+## Future: buoy enclosure
+
+Out of scope for now, kept here so the original vision isn't lost. Once the node
+itself meets the definition of "done" above, this is the next phase:
+
+* **Floating enclosure.** A waterproof housing that floats the node in Lake
+  Vänern/Karlstad, with the DS18B20 probe hanging in the water and the antenna/solar
+  panels above the surface. Not yet designed.
+* **Self-righting.** The enclosure should return itself upright if capsized by waves
+  or wake — likely a low center of gravity / ballast approach. Not yet designed.
+* **Solar charging.** 4x solar panels in parallel (approx. 30 mA each, verified
+  measurement, not the advertised 300 mA) into the P1 solar connector. Charge range
+  4.4 to 5.5 V, Schottky diode per panel.
+* **Lake deployment.** Final placement in the water, verifying the link back via at
+  least one KSD repeater from the actual deployment site, and a long-duration (48h+)
+  soak test for water ingress and drift/capsize behavior.
