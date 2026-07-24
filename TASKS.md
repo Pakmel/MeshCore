@@ -211,9 +211,9 @@ weekends and pastes results back.
       any channel message, something is wrong with the key derivation.
 * [ ] In the MeshCore mobile app, add a channel matching `MESHTEMP_CHANNEL_NAME`
       in `src/meshtemp_config.h` byte-for-byte, including the `#` (now
-      `#MeshTemp`, final - see "Production identity set" below). Remember
-      hashtag channel names are case sensitive: `#meshtemp` is a different
-      channel with a different key.
+      `#meshtemp`, final, all lowercase - see "Production identity set" and
+      "Channel name lowercased" below). The app doesn't accept uppercase in a
+      hashtag channel name at all.
 * [ ] Watch for `[channel send] Water: ...` lines every 2 minutes in serial,
       and confirm the same message shows up in the app's channel via at least
       one KSD repeater (not just a direct link to your phone).
@@ -538,6 +538,12 @@ weekends and pastes results back.
       `#meshtemp` would derive a different key and silently receive nothing.
       `examples/meshtemp/README.md` updated everywhere the channel is
       mentioned (Configuration section, "How the channel name works" section).
+
+      **Update (2026-07-24):** wrong premise - the MeshCore app does not
+      accept uppercase at all in a hashtag channel name (not a case-sensitivity
+      footnote, an app-side input restriction), so `#MeshTemp` was never
+      enterable. Changed to all-lowercase `#meshtemp` - see "Channel name
+      lowercased" below.
 * [x] Default node name (`ADVERT_NAME` in `variants/rak4631/platformio.ini`,
       the only place this lives - see the Rename section's note on
       `MESHTEMP_DEFAULT_NAME` not existing as a separate macro) changed from
@@ -647,6 +653,27 @@ weekends and pastes results back.
       as the channel-name change above; this one changes on-wire packet header
       bits (route type + transport codes) for every send, which reads more clearly
       as a protocol-level change than the channel rename did.
+
+## Channel name lowercased (2026-07-24)
+
+* [x] `MESHTEMP_CHANNEL_NAME` changed from `#MeshTemp` to `#meshtemp` - the
+      MeshCore app does not accept uppercase in a hashtag channel name at all
+      (not a case-sensitivity nuance as the "Production identity set" entry
+      above assumed - the app-side input simply rejects/can't produce an
+      uppercase character there), so `#MeshTemp` could never actually be
+      entered on the receiving end. `src/meshtemp_config.h` updated.
+* [x] `examples/meshtemp/README.md` updated everywhere the channel is
+      mentioned (Configuration bullet, "How the channel name works" section)
+      and the case-sensitivity note rewritten: channel names should be all
+      lowercase since the app enforces it, and the firmware constant must
+      match exactly whatever's entered in the app.
+* [x] Rebuild both envs with proof, commit, push
+      Both `-t create_uf2`: `RAK_4631_meshtemp` SUCCESS (41.99s),
+      `RAK_4631_meshtemp_sleep` SUCCESS (42.33s). Zero errors/warnings grepped
+      in both logs. `.uf2` timestamps confirmed current (14:08:27 / 14:09:17,
+      checked at 14:09:25). String `#meshtemp` confirmed present (`grep -a -o`)
+      in both `.uf2` files; the old `#MeshTemp` string confirmed absent from
+      both.
 
 ## Round 6 – Field test before deployment
 
