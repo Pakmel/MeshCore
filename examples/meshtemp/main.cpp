@@ -2,6 +2,10 @@
 #include "meshtemp_version.h"
 #include "RegionScope.h"
 
+#ifdef MESHTEMP_PIN_DEBUG
+  #include "PinScanDebug.h"
+#endif
+
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
   static UITask ui_task(display);
@@ -281,6 +285,28 @@ void setup() {
   Serial.println(MESHTEMP_VERSION);
 
   board.begin();
+
+#ifdef MESHTEMP_PIN_DEBUG
+  // TEMPORARY - runs right after board.begin() (matches where the real
+  // water_sensor.begin() runs later in setup()), before radio/mesh init so
+  // it still logs even if a later step hangs. See PinScanDebug.h.
+  //
+  // A reset also resets the nRF52's USB peripheral, so the host's serial
+  // connection drops and has to re-enumerate - a one-shot boot print race
+  // the host easily loses. Wait here for the host to actually reconnect
+  // (tud_cdc_n_connected() via Serial's operator bool(), the documented
+  // `while (!Serial) {}` idiom from Adafruit_USBD_CDC.cpp) before scanning,
+  // instead of hoping the timing works out. Capped so a debug flash left
+  // running with no monitor attached doesn't hang forever.
+  {
+    unsigned long wait_start = millis();
+    while (!Serial && (millis() - wait_start) < 30000UL) {
+      delay(50);
+    }
+    delay(300);  // let the host's monitor actually start reading, not just enumerate
+  }
+  pinScanDebug();
+#endif
 
 #ifdef DISPLAY_CLASS
   if (display.begin()) {

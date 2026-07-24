@@ -111,6 +111,13 @@ on 869 MHz. The retry window must never trigger more than one retransmission.
 ## Known pitfalls
 
 * WB_IO2 controls 3.3V power to certain WisBlock modules, do not use it for 1-Wire.
+* A stray strand from the DS18B20's stranded wire can bridge the IO1 pad to the
+  adjacent IO2 pad and produce the exact same symptom as a fully disconnected
+  probe (`ERR(-127)`) - a real failure hit while building this project, not
+  hypothetical. Tin wire ends before inserting/soldering. See
+  `examples/meshtemp/RegionScope.h`'s sibling `PinScanDebug.h` (the
+  `RAK_4631_meshtemp_pindebug` env) for the empirical bus-scan tool built to
+  diagnose exactly this, and the README "Troubleshooting" section.
 * Firmware 1.11+ has a known bug where the RAK4631 reports CPU temperature instead
   of sensor temperature in the pull telemetry. Our push reads the DS18B20 directly and
   does not depend on that code path, but always verify the first reading against a

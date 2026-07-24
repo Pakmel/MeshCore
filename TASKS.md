@@ -206,9 +206,12 @@ weekends and pastes results back.
 * [ ] Dip the probe in a glass of water alongside a reference thermometer,
       compare readings - deviation must be under 1 C. Note the actual
       deviation here once measured.
-* [ ] Confirm boot also logs `[channel key self-check] #test -> ... PASS`
+* [x] Confirm boot also logs `[channel key self-check] #test -> ... PASS`
       (see Round 3) - if it says FAIL, stop and report back before trusting
       any channel message, something is wrong with the key derivation.
+      Confirmed directly from captured serial output during the pin-mapping
+      investigation (2026-07-24), repeated across multiple boots:
+      `[channel key self-check] #test -> 9CD8FCF22A47333B591D96A2B848B73F  PASS`.
 * [ ] In the MeshCore mobile app, add a channel matching `MESHTEMP_CHANNEL_NAME`
       in `src/meshtemp_config.h` byte-for-byte, including the `#` (now
       `#meshtemp`, final, all lowercase - see "Production identity set" and
@@ -674,6 +677,194 @@ weekends and pastes results back.
       checked at 14:09:25). String `#meshtemp` confirmed present (`grep -a -o`)
       in both `.uf2` files; the old `#MeshTemp` string confirmed absent from
       both.
+
+## Pin mapping investigation - WB_IO1 vs RAK19007 IO1 pad (2026-07-24)
+
+Reported symptom: `Water: ERR(-127)` (probe not responding) despite wiring
+double-checked against the RAK19007 pad silkscreened "IO1". `-127` is
+`DEVICE_DISCONNECTED_RAW` (see `WaterTempSensor::readResult()`) - the DS18B20
+genuinely isn't answering on the pin the firmware is polling, which is
+consistent with either a real wiring fault *or* the firmware polling the wrong
+nRF52 GPIO for that pad.
+
+* [x] Verify pin mapping end to end: what GPIO does `WB_IO1` resolve to in our
+      variant files, and what does RAK's own documentation say the IO1 pad
+      connects to
+      Our side: `variants/rak4631/variant.h:44` -
+      `static const uint8_t WB_IO1 = 17;`. `variants/rak4631/variant.cpp`'s
+      `g_ADigitalPinMap[]` is the identity map (Arduino pin N = nRF52 pin N, P0
+      for 0-31, P1 for 32-47), so Arduino pin 17 = **P0.17** with no indirection
+      to check for tampering there.
+
+      RAK's side (web research, not assumed - see chat for exact sources):
+      the RAK4631 module's own WisConnector (40-pin board-to-board) datasheet
+      lists connector **pin 29 as the "IO1" signal**. Meshtastic's
+      community-maintained RAK GPIO mapping table (independently cross-checked
+      against ours, not derived from it) states **WB_IO1 = P0.17** explicitly -
+      matching our variant.h exactly. The RAK19007 datasheet confirms the Core
+      module sits in a single **fixed** connector slot (distinct from the
+      plug-in sensor slots A-D, whose IO1/IO2 assignment *does* vary by slot -
+      that variability doesn't apply here), so the base board's own "IO1"
+      solder pad should trace straight to WisConnector pin 29 = P0.17,
+      unconditionally.
+      **Conclusion: no pin-mapping bug found.** Our `WB_IO1` constant and RAK's
+      documented IO1 signal agree (P0.17) via two independent sources. Could
+      not obtain RAK's full schematic to trace the pad-to-connector-pin copper
+      trace itself (datasheet text only), so this isn't hardware-schematic
+      certain - if the empirical scan below also comes up empty on both pins,
+      that would be the next thing to press RAK support or the schematic for.
+      Given the docs check came back clean, ERR(-127) is more likely a wiring/
+      pullup/continuity/power issue on this specific board or cable than a
+      firmware pin-mapping bug - see the debug scan below for empirical proof
+      either way.
+* [x] Add a temporary debug build: scan the 1-Wire bus at boot on WB_IO1, and
+      the same scan on the WB_IO2 pin number for comparison
+      New `examples/meshtemp/PinScanDebug.{h,cpp}` (entire `.cpp` body guarded
+      behind `MESHTEMP_PIN_DEBUG`, so it compiles to nothing in
+      `RAK_4631_meshtemp`/`_sleep` - confirmed via string check, see below).
+      `pinScanDebug()` runs a raw `OneWire::search()` loop (not
+      `DallasTemperature`'s device-count scan - this logs *every* ROM found,
+      not just "a DS18B20 responded", and CRC-checks each one so bus noise on a
+      floating pin doesn't get misread as a device) separately on `WB_IO1` and
+      on the `WB_IO2` pin number, printing each ROM's 8 bytes + a CRC OK/
+      MISMATCH verdict, called from `main.cpp` `setup()` right after
+      `board.begin()` (matches where the real `water_sensor.begin()` runs
+      later - before radio/mesh init, so it still logs even if a later step
+      hangs). The WB_IO2 scan is prefixed with a printed caveat: CLAUDE.md's
+      own "Known pitfalls" already flags WB_IO2 as a 3.3V power-switch pin on
+      some WisBlock modules, not guaranteed general-purpose 1-Wire data - a
+      clean/empty result there doesn't fully rule out mis-wiring, only that
+      nothing answers on that GPIO number.
+      New env `RAK_4631_meshtemp_pindebug` in `variants/rak4631/platformio.ini`
+      (`extends = env:RAK_4631_meshtemp`, adds `-D MESHTEMP_PIN_DEBUG=1` only) -
+      marked TEMPORARY in a comment, delete once this investigation is closed.
+      **Caught mid-build:** the first `-t create_uf2` after guarding the `.cpp`
+      recompiled `PinScanDebug.cpp.o` but the linker did NOT rerun (`firmware.elf`/
+      `.hex` stayed at their previous timestamp; `create_uf2` silently converted
+      the stale `.hex` anyway) - exactly the class of trap the build working
+      rule at the top of this file exists to catch, just one layer deeper than
+      the original incident (there the `.uf2` itself was never regenerated;
+      here the `.uf2` *was* regenerated, but from a stale `.hex`). Caught by
+      checking `.o`/`.elf`/`.hex`/`.uf2` timestamps relative to each other, not
+      just relative to "now". Fixed by deleting
+      `.pio/build/RAK_4631_meshtemp_pindebug` and rebuilding clean; re-verified
+      the two normal envs' rebuilds afterwards actually show `Linking .../
+      firmware.elf` + `Building .../firmware.hex` in the log (not just
+      `create_uf2_action`) before trusting their timestamps either.
+      All three envs (`RAK_4631_meshtemp`, `RAK_4631_meshtemp_sleep`,
+      `RAK_4631_meshtemp_pindebug`) rebuilt clean, zero real errors/warnings,
+      `.uf2` timestamps confirmed current and internally consistent
+      (`.o` < `.elf`/`.hex` < `.uf2`, all within the same build). String
+      `"pin scan"` confirmed present in the pindebug `.uf2` only, confirmed
+      **absent** from both `RAK_4631_meshtemp` and `RAK_4631_meshtemp_sleep` -
+      the debug code adds nothing to the two real firmware builds.
+* [x] Flash `RAK_4631_meshtemp_pindebug`, capture the boot serial log, compare
+      ROM codes/CRC results on WB_IO1 vs WB_IO2, decide next step (wiring fix,
+      or escalate to RAK support/schematic if both come up empty)
+      **First capture attempt lost the boot output entirely** - resetting the
+      RAK4631 resets its USB peripheral too, so the host's CDC connection
+      drops and has to re-enumerate; `pio device monitor`'s handle went stale
+      across that drop and silently stopped receiving (task stayed "running",
+      no error, just no new lines - confirmed by checking task status +
+      `pio device list` mid-investigation rather than assuming). Rebuilding
+      the connection before each reset didn't help either, since the *next*
+      press killed the new connection the same way - the failure mode is
+      inherent to resetting while attached, not a stale pre-existing handle.
+      Switched to a small auto-reconnecting Python capture script (retries
+      `serial.Serial(...)` open on any exception) instead of `pio device
+      monitor` - this survives the drop, but the first successful capture
+      through it still only picked up output from partway through `setup()`
+      onward (GPS/I2C sensor sweep, channel self-check, etc.) - the
+      `[pin scan]` lines themselves, which run right after `board.begin()`,
+      were already gone by the time the reconnect completed. Root cause: a
+      one-shot boot print is racing a real USB re-enumeration, and that race
+      isn't reliably winnable from the host side.
+      **Fix (code, not just capture tooling):** `main.cpp`'s
+      `MESHTEMP_PIN_DEBUG` block now waits for `Serial` (`operator bool()` on
+      `Adafruit_USBD_CDC`, which reflects `tud_cdc_n_connected()`) before
+      calling `pinScanDebug()` - this is the framework's own documented
+      `while (!Serial) {}` idiom (see the comment above that exact line in
+      `Adafruit_USBD_CDC.cpp`), capped at 30s so a debug build left running
+      with nothing attached doesn't hang forever, plus a 300ms settle delay
+      so the host's reader loop is actually pumping before the scan starts.
+      Rebuilt `RAK_4631_meshtemp_pindebug` after this fix - caught the exact
+      same stale-linker trap as the first pindebug build (recompiled `.o`,
+      but `Linking`/`Building .hex` didn't appear in the log the *first* time
+      `-t create_uf2` ran after the edit); this time just re-ran it and
+      confirmed `Linking .../firmware.elf` + `Building .../firmware.hex` both
+      appear before trusting the result - zero errors/warnings, `.o` < `.elf`/
+      `.hex` < `.uf2` timestamps all fresh and consistent.
+
+      **Result, reflashed and captured cleanly (twice, same result both
+      times):**
+      ```
+      [pin scan] starting WB_IO1 / WB_IO2 comparison scan...
+      [pin scan] WB_IO1 (pin 17):
+        (no devices found)
+      [pin scan] NOTE: WB_IO2 is documented as a 3.3V power-switch pin on some
+      [pin scan]       WisBlock modules, not guaranteed general-purpose 1-Wire data.
+      [pin scan] WB_IO2 (pin 34):
+        (no devices found)
+      [pin scan] done
+      ```
+      Zero ROM codes on *either* pin - not a CRC mismatch/noise case, a raw
+      `OneWire::search()` found nothing to even mis-read. Combined with the
+      docs research above (WB_IO1 = P0.17 confirmed from two independent
+      sources, matching our variant.h), this rules out "wired to IO2 instead
+      of IO1 by mistake" as well, since IO2 came up empty too.
+      **Interpretation:** not a pin-mapping bug - it's a physical-layer fault:
+      most likely the 4.7k pullup (missing, wrong value, or wired
+      DATA-to-GND instead of DATA-to-VDD would produce exactly this "nothing
+      answers" symptom), a bad/incomplete solder joint or continuity fault on
+      one of the three DS18B20 leads, VDD not actually reaching 3.3V at the
+      probe, or a dead probe. Next step is a multimeter continuity/voltage
+      check on the actual DS18B20 leads (not just visual wiring inspection),
+      and/or swapping in a second probe to rule out a dead sensor - see
+      "Weekend hardware pass" for the pattern to fold this into.
+
+## v0.6.0 release readiness check (2026-07-24)
+
+Before tagging the v0.6.0 pre-release (video release), an honest pass over
+what's actually confirmed versus still open, rather than checking off the
+whole "Weekend hardware pass" list on the strength of "it works now":
+
+**Confirmed this session (direct evidence, not just project-owner report):**
+* Channel key self-check `PASS` - captured directly in serial output multiple
+  times (see the now-checked item above).
+* The read/send/retry code path structurally works end to end (probe read ->
+  `formatMessage()` -> `createGroupDatagram()` -> `sendFlood()`/echo-retry) -
+  captured `[channel send] Water: ERR(-127) Batt: ...` and
+  `[retry] repeat heard` lines live during the pin-mapping investigation.
+  The *content* was an error case at the time (probe not responding), but the
+  mechanism itself (detect -> format -> send -> retry-listen) was exercised
+  and did not fault.
+* Region scoping and the lowercase channel name are baked into this exact
+  release build (verified by string check in the built `.uf2`s - see below).
+
+**NOT independently confirmed this session (project owner reported "it works
+now" after reflashing following the wiring fix, but no serial capture or
+reference-thermometer comparison was made here to verify it):**
+* `DS18B20 detected on WB_IO1` boot line (vs. `NOT detected`).
+* Reference-thermometer water-glass accuracy check
+  (`PLAUSIBLE`/deviation-under-1C item, "Weekend hardware pass" above) -
+  still unchecked above; "it works now" confirms the probe responds again,
+  not that its accuracy has been (re-)verified against a reference.
+* Channel message actually arriving in the MeshCore app / MeshMonitor via a
+  real KSD repeater (vs. just the send path executing without fault).
+
+**Explicitly still open, and these gate 1.0.0 per CLAUDE.md's "Definition of
+done" (correct temperature every hour through at least one repeater, average
+current under 0.5 mA):**
+* [ ] Round 4's retry field test on real hardware (temporarily disable the
+      nearest repeater, confirm `[retry] retry sent` then `[retry] repeat
+      heard` on a later cycle once the repeater's back) - still open, see
+      "Weekend hardware pass" above.
+* [ ] Round 5's sleep-cycle power measurement on `RAK_4631_meshtemp_sleep`,
+      on battery only, target under 0.5 mA average over 6h+ - still open,
+      see "Weekend hardware pass" above.
+
+v0.6.0 is tagged as a **pre-release** specifically because of these two open
+items - see the release notes.
 
 ## Round 6 – Field test before deployment
 

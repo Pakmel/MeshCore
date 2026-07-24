@@ -4,4 +4,4 @@
 // "Versioning" for the bump rules. Written to serial at boot, never sent
 // in the channel message.
 
-#define MESHTEMP_VERSION "0.5.0"
+#define MESHTEMP_VERSION "0.6.0"
