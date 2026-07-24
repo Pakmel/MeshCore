@@ -45,9 +45,9 @@
   static unsigned long next_test_read_due = 0;
   static unsigned long next_test_send_due = 0;
   #define MESHTEMP_TEST_READ_INTERVAL_MS (10UL * 1000UL)
-  // Round 3 test cadence (TASKS.md: "test interval 2 minutes"). The real
-  // once-per-hour cadence is MESHTEMP_SEND_INTERVAL_SECS, from
-  // meshtemp_config.h - only RAK_4631_meshtemp_sleep uses it.
+  // Bench-test cadence: every 2 minutes. The real once-per-hour cadence is
+  // MESHTEMP_SEND_INTERVAL_SECS, from meshtemp_config.h - only
+  // RAK_4631_meshtemp_sleep uses it.
   #define MESHTEMP_TEST_SEND_INTERVAL_MS (2UL * 60UL * 1000UL)
   #endif
 #endif

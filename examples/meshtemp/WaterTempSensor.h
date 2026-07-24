@@ -4,7 +4,7 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 
-// See CLAUDE.md "Message format" for the three cases this maps to.
+// See the README's "Message format" section for the three cases this maps to.
 enum class WaterReadingCase : uint8_t {
   NORMAL,        // case 1: plausible reading
   IMPLAUSIBLE,   // case 2: real reading, outside PLAUSIBLE_MIN_C..PLAUSIBLE_MAX_C

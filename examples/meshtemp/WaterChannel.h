@@ -7,11 +7,11 @@
 
 #define MESHTEMP_MSG_MAX_LEN 48
 
-// Hashtag-channel key derivation and message formatting for MeshTemp.
-// See CLAUDE.md "Radio" (channel key derivation) and "Message format"
-// (the 3-case contract) - this class is the single place that contract
-// gets turned into bytes, so it can't drift between test-mode logging and
-// the real channel send.
+// Hashtag-channel key derivation and message formatting for MeshTemp (see
+// the README for the channel-key derivation and the 3-case message-format
+// contract) - this class is the single place that contract gets turned into
+// bytes, so it can't drift between test-mode logging and the real channel
+// send.
 class WaterChannel {
 public:
   mesh::GroupChannel channel;
@@ -22,8 +22,8 @@ public:
   // BaseChatMesh::setChannel's 128-bit-key path exactly.
   void begin();
 
-  // Runs the known-answer check from CLAUDE.md: "#test" must derive the
-  // key 9cd8fcf22a47333b591d96a2b848b73f. Logs PASS/FAIL to serial.
+  // Runs the known-answer check: "#test" must derive the key
+  // 9cd8fcf22a47333b591d96a2b848b73f. Logs PASS/FAIL to serial.
   // Returns true on pass. Does not touch `channel` - independent check.
   static bool selfCheckKeyDerivation();
 

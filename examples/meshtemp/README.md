@@ -6,8 +6,7 @@ encrypted channel message on a MeshCore mesh — no phone, no pull telemetry, no
 custom payload. The node sleeps deeply between transmissions to run on battery.
 
 This example is a fork of `examples/simple_sensor`, copied into its own directory so
-upstream MeshCore merges stay clean. Full project background and architecture
-decisions live in the repo root [`CLAUDE.md`](../../CLAUDE.md).
+upstream MeshCore merges stay clean.
 
 ## Parts list
 
@@ -19,8 +18,9 @@ decisions live in the repo root [`CLAUDE.md`](../../CLAUDE.md).
 * Solder, or a small length of wire and a way to join it (screw terminal,
   crimp connector, etc.) — see "Hardware" below, either works
 * USB cable (data-capable, not charge-only) for flashing and for the bench build
-* A LiPo/Li-ion battery for running untethered (see CLAUDE.md's Definition of
-  "done" for the target current draw), or USB power for bench testing
+* A LiPo/Li-ion battery for running untethered — the target is an average
+  current draw under 0.5 mA on the production build — or USB power for bench
+  testing
 
 ## Hardware
 
@@ -125,7 +125,7 @@ is no remote configuration of these, any change needs a USB reflash:
 |---|---|---|---|
 | `MESHTEMP_CHANNEL_NAME` | `meshtemp_config.h` | `"#meshtemp"` | Hashtag channel name — also the key material (see "How the channel name works"). **Must be all lowercase**: the MeshCore app doesn't accept uppercase in a hashtag channel name at all, so anything but lowercase can't even be entered on the receiving end. |
 | `MESHTEMP_REGION` | `meshtemp_config.h` | `"se17"` | Transport-code region scope (see "Region scoping"). Set it to your own local region code, or `""` (empty string) to send unscoped so every repeater forwards it regardless of region configuration. |
-| `MESHTEMP_SEND_INTERVAL_SECS` | `meshtemp_config.h` | `60UL * 60UL` (1 hour) | Production push interval. **Duty-cycle etiquette:** don't shorten this drastically on a shared mesh. The one-hour interval plus at most one retry keeps this node's airtime well under 10% on 869 MHz (see CLAUDE.md "Radio") — a much shorter interval on a real deployment eats into other nodes' share of the same shared spectrum. |
+| `MESHTEMP_SEND_INTERVAL_SECS` | `meshtemp_config.h` | `60UL * 60UL` (1 hour) | Production push interval. **Duty-cycle etiquette:** don't shorten this drastically on a shared mesh. The one-hour interval plus at most one retry keeps this node's airtime well under 10% on 869 MHz — a much shorter interval on a real deployment eats into other nodes' share of the same shared spectrum. |
 | `RETRY_WINDOW_S` | `meshtemp_config.h` | `30` (seconds) | How long to listen for a repeater echo of this node's own packet before resending exactly once. |
 | `PLAUSIBLE_MIN_C` / `PLAUSIBLE_MAX_C` | `meshtemp_config.h` | `-5.0` / `45.0` | Plausibility bounds for a reading. Outside this range the value is still sent (it's real sensor data, not an error) but flagged with `?` — see "Message format" case 2. |
 | `ADVERT_NAME` | `variants/rak4631/platformio.ini` (a build flag, **not** in `meshtemp_config.h` — there's no separate default-name macro) | `"MeshTemp1"` | The node's default advertised name. Can be changed after flashing without a reflash — see "Renaming your node" below. |
@@ -141,10 +141,10 @@ The node name isn't locked to `ADVERT_NAME` after first boot — it's stored in
    supports renaming (and other admin commands) via the app's remote
    administration feature over LoRa, authenticated with the admin password
    (`ADMIN_PASSWORD` build flag in `variants/rak4631/platformio.ini`, default
-   `"password"`). This project's own stance is USB-only configuration (see
-   CLAUDE.md "No remote administration") — if you do enable remote admin,
-   **change the default password first**, since the default is public in this
-   repo and anyone who's read it can authenticate as admin against your node.
+   `"password"`). This project's own stance is USB-only configuration — if
+   you do enable remote admin, **change the default password first**, since
+   the default is public in this repo and anyone who's read it can
+   authenticate as admin against your node.
 
 Either way, the new name (and password, if you change it) is saved to the
 nRF52's internal filesystem — a separate flash region from the application
@@ -225,8 +225,8 @@ Water: ERR(-127) Batt: 3.91V
 `-127` — probe not responding (check wiring/pullup). `85` — power-on default value,
 read too early (timing bug, should not occur in normal operation).
 
-This format is a contract with downstream parsing (Home Assistant / MeshMonitor) and
-does not change in patch releases — see `CLAUDE.md` "Versioning".
+This format is a contract with downstream parsing (Home Assistant / MeshMonitor) —
+it's treated as a protocol and does not change without a version bump.
 
 ## Retry
 

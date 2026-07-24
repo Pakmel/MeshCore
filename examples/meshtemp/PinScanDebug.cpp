@@ -39,11 +39,11 @@ static void scanPin(uint8_t pin, const char* label) {
 void pinScanDebug() {
   Serial.println("[pin scan] starting WB_IO1 / WB_IO2 comparison scan...");
   scanPin(WB_IO1, "WB_IO1");
-  // CLAUDE.md "Known pitfalls": WB_IO2 controls 3.3V power to certain
-  // WisBlock modules on some slots, it isn't necessarily a general-purpose
-  // 1-Wire-capable data pin - a negative result here doesn't by itself rule
-  // out the probe being wired to whatever pad is physically silkscreened
-  // IO2, only that it doesn't answer on the WB_IO2 GPIO number.
+  // WB_IO2 controls 3.3V power to certain WisBlock modules on some slots -
+  // it isn't necessarily a general-purpose 1-Wire-capable data pin - a
+  // negative result here doesn't by itself rule out the probe being wired
+  // to whatever pad is physically silkscreened IO2, only that it doesn't
+  // answer on the WB_IO2 GPIO number.
   Serial.println("[pin scan] NOTE: WB_IO2 is documented as a 3.3V power-switch pin on some");
   Serial.println("[pin scan]       WisBlock modules, not guaranteed general-purpose 1-Wire data.");
   scanPin(WB_IO2, "WB_IO2");
