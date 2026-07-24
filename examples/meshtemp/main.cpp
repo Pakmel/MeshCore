@@ -1,5 +1,6 @@
 #include "SensorMesh.h"
 #include "meshtemp_version.h"
+#include "RegionScope.h"
 
 #ifdef DISPLAY_CLASS
   #include "UITask.h"
@@ -122,7 +123,13 @@ static bool meshtempSendChannelData(const uint8_t* data, int data_len, uint8_t* 
   if (!pkt) return false;
 
   pkt->calculatePacketHash(out_hash);
-  the_mesh.sendFlood(pkt);
+  if (RegionScope::active()) {
+    uint16_t codes[2];
+    RegionScope::codesFor(pkt, codes);
+    the_mesh.sendFlood(pkt, codes);
+  } else {
+    the_mesh.sendFlood(pkt);
+  }
   return true;
 }
 
@@ -322,6 +329,10 @@ void setup() {
   sensors.begin();
 
   the_mesh.begin(fs);
+
+  // Derive the MESHTEMP_REGION transport key before anything gets sent -
+  // both the boot advert below and the channel-message send cycle need it.
+  RegionScope::begin();
 
 #ifdef DISPLAY_CLASS
   ui_task.begin(the_mesh.getNodePrefs(), FIRMWARE_BUILD_DATE, FIRMWARE_VERSION);

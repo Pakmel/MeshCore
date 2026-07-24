@@ -70,6 +70,19 @@ Deliberate choice: hashtag channels are public by design, anyone with the name c
 read and write. Accepted for water temperature. NEVER switch to this channel type for
 anything sensitive in other projects.
 
+**Region: transport-code scope.** `MESHTEMP_REGION` (compile-time constant in
+meshtemp_config.h, default `se17`) is applied to every outgoing channel message and
+to the first boot advert, as a MeshCore transport code (`Mesh::sendFlood`/
+`sendZeroHop`'s transport-codes overload, `ROUTE_TYPE_TRANSPORT_FLOOD`/
+`ROUTE_TYPE_TRANSPORT_DIRECT`). This is separate from the channel key: it doesn't
+gate who can decrypt the message, only which repeaters relay it. A repeater that
+hasn't allowed the region (`RegionMap`/`region` CLI commands, see
+`src/helpers/RegionMap.cpp`) silently drops the packet instead of forwarding it -
+this is deliberate upstream behavior, not a bug, and must be verified against a
+real KSD repeater before relying on it in the field. Empty string means unscoped
+(the plain, non-transport route every repeater forwards regardless of region).
+See `examples/meshtemp/RegionScope.h` and the README "Region scoping" section.
+
 Duty cycle: one transmission per hour plus max one retry is well under 10 percent
 on 869 MHz. The retry window must never trigger more than one retransmission.
 

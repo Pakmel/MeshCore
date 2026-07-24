@@ -56,6 +56,9 @@ remote administration, any change needs a USB reflash:
 * `MESHTEMP_SEND_INTERVAL_SECS` — push interval (1 hour)
 * `RETRY_WINDOW_S` — how long to listen for a repeater echo before retrying
 * `PLAUSIBLE_MIN_C` / `PLAUSIBLE_MAX_C` — plausibility bounds for the reading
+* `MESHTEMP_REGION` — transport-code region scope, e.g. `"se17"`. Set this to
+  your own local region, or `""` (empty string) to send unscoped — see
+  "Region scoping" below.
 
 ## How the channel name works
 
@@ -75,6 +78,32 @@ channel names are case sensitive: the app entry must match `#MeshTemp` exactly �
 Hashtag channels are public by design — anyone who knows the name can read and
 write to it. That's an accepted tradeoff for an outdoor temperature reading; don't
 reuse this pattern for anything sensitive.
+
+## Region scoping
+
+Every outgoing channel message, and the first boot advert, carry a **transport
+code** derived from `MESHTEMP_REGION` in `src/meshtemp_config.h` (default
+`"se17"`). This is a separate mechanism from the channel key above — it doesn't
+affect who can *decrypt* the message, only which **repeaters** will relay it.
+
+MeshCore repeaters can be configured (via their own `region` CLI commands) to
+only forward flood packets whose transport code matches a region they've
+explicitly allowed. **If a repeater along the path hasn't allowed your
+region, it silently drops the packet instead of forwarding it** — there's no
+error, the message just doesn't get any further. This is the flip side of the
+same mechanism: it lets a shared repeater infrastructure carry multiple
+projects' traffic without every project's packets flooding every region.
+
+If you're building your own node from this project: set `MESHTEMP_REGION` to
+your own local region code (whatever the repeaters you rely on have agreed to
+allow), or set it to `""` (empty string) to send unscoped — the same plain,
+unscoped flood/zero-hop route this firmware used before this feature existed,
+which every repeater forwards regardless of its region configuration.
+
+The transport code itself isn't a secret and adds no confidentiality — it's
+just a routing tag, derived the same way a hashtag channel key is (SHA256 of
+the region name, with a leading `#`), so a repeater operator can allow a
+region by name (e.g. `region put se17`) without any extra coordination.
 
 ## Message format
 

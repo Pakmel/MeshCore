@@ -1,4 +1,5 @@
 #include "SensorMesh.h"
+#include "RegionScope.h"
 
 /* ------------------------------ Config -------------------------------- */
 
@@ -818,6 +819,12 @@ void SensorMesh::sendSelfAdvertisement(int delay_millis, bool flood) {
   if (pkt) {
     if (flood) {
       sendFlood(pkt, delay_millis, _prefs.path_hash_mode + 1);
+    } else if (RegionScope::active()) {
+      // Only path this ever takes in MeshTemp: the boot advert (see
+      // main.cpp setup()) is always sent zero-hop (flood=false).
+      uint16_t codes[2];
+      RegionScope::codesFor(pkt, codes);
+      sendZeroHop(pkt, codes, delay_millis);
     } else {
       sendZeroHop(pkt, delay_millis);
     }

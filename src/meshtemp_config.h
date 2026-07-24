@@ -21,3 +21,13 @@
 // "Message format" case 2.
 #define PLAUSIBLE_MIN_C (-5.0f)
 #define PLAUSIBLE_MAX_C (45.0f)
+
+// Transport-code region scope, applied to every outgoing channel message and
+// to the first boot advert (see examples/meshtemp/RegionScope.h and
+// examples/meshtemp/README.md "Region scoping"). Repeaters that gate flood
+// forwarding by region only relay packets scoped to a region they've
+// explicitly allowed - an unconfigured region silently drops the packet
+// instead of forwarding it. Empty string means unscoped: no transport code
+// is attached, matching the plain flood/zero-hop route used before this
+// feature existed.
+#define MESHTEMP_REGION "se17"

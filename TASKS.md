@@ -549,6 +549,105 @@ weekends and pastes results back.
       that CLAUDE.md's versioning rule would call a channel-key change at
       least a minor bump while major is 0, if/when a version bump is wanted.
 
+## Region scoping (se17) (2026-07-24)
+
+* [x] Research first, before writing anything: how does the v1.16 base implement
+      region scope on outgoing flood packets, and what's available to our
+      createGroupDatagram path
+      Read the actual mechanism instead of guessing (`src/helpers/RegionMap.{h,cpp}`,
+      `src/helpers/TransportKeyStore.{h,cpp}`, `src/Packet.h`, `src/Mesh.{h,cpp}`,
+      `examples/simple_repeater/MyMesh.cpp`). Findings:
+      - Packets carry `transport_codes[2]` (`src/Packet.h`), only meaningful when
+        the packet's 2-bit route type is `ROUTE_TYPE_TRANSPORT_FLOOD` or
+        `ROUTE_TYPE_TRANSPORT_DIRECT` (`Packet::hasTransportCodes()`) - set via the
+        `Mesh::sendFlood(pkt, transport_codes[2], ...)` /
+        `Mesh::sendZeroHop(pkt, transport_codes[2], ...)` overloads (both public,
+        `src/Mesh.h`/`.cpp`), distinct from the plain (unscoped) overloads our code
+        already calls.
+      - A transport code is `TransportKey::calcTransportCode(packet)`
+        (`src/helpers/TransportKeyStore.cpp`): an HMAC-SHA256 of payload-type +
+        payload, keyed by a 16-byte `TransportKey`, truncated to 2 bytes (codes
+        0x0000/0xFFFF reserved). This runs per-packet (payload-dependent), unlike
+        the channel key which is derived once.
+      - The 16-byte `TransportKey` for a *region* is itself derived like a hashtag
+        channel key: `TransportKeyStore::getAutoKeyFor()` does
+        `sha256(name)[0..16)`. `RegionMap::getTransportKeysFor()`'s "implicit auto
+        hashtag region" path (region name has neither `$` nor `#` prefix) computes
+        this from `"#" + region_name` - so a region called `se17` and one called
+        `#se17` resolve to the identical key. Verified by reading the branch, not
+        assumed.
+      - This whole mechanism is enforced entirely on the **receiving/relaying**
+        side: `MyMesh::filterRecvFloodPacket()` (simple_repeater) resolves the
+        packet's region via `RegionMap::findMatch()`, and
+        `MyMesh::allowPacketForward()` refuses to forward any *flood*-routed
+        packet whose region didn't resolve (`recv_pkt_region == NULL`) - silent
+        drop, no error, no ack. New regions default to `REGION_DENY_FLOOD`
+        (`RegionMap::putRegion()`) until an operator explicitly runs
+        `region allowf <name>`. Confirms the requirement's premise: an
+        unconfigured region really does make messages die at the first repeater
+        that doesn't know it.
+      - `examples/meshtemp/SensorMesh.{h,cpp}` (inherited from `simple_sensor`)
+        already has `region_map`/`key_store`/`default_scope` members and computes
+        `default_scope` in `begin()` from a `DEFAULT_FLOOD_SCOPE_NAME` build flag
+        IF one is defined - but confirmed via `diff` against
+        `examples/simple_sensor/SensorMesh.cpp` that this is byte-identical
+        upstream code that computes `default_scope` and then never applies it to
+        any outgoing send anywhere in the file (dead/latent upstream feature).
+        Deliberately did NOT wire our region through this path: `region_map` is
+        loaded from a persisted `/regions2` file and re-configurable at runtime
+        via the CLI's `region default <name>` command (`CommonCLI::handleRegionCmd`,
+        `src/helpers/CommonCLI.cpp`) - that's a live "remote administration"-shaped
+        override surface (reachable over the same USB serial CLI everything else
+        uses, but a *runtime* one) for something CLAUDE.md says must stay a
+        compile-time constant. Implemented independently instead (see below), so
+        `MESHTEMP_REGION` can never be moved by a CLI command.
+* [x] Implement: `MESHTEMP_REGION` constant in meshtemp_config.h, applied to every
+      channel message and the first boot advert
+      `MESHTEMP_REGION "se17"` added to `src/meshtemp_config.h` (empty string ->
+      unscoped, sits right next to `MESHTEMP_CHANNEL_NAME`, same "compile-time
+      only" treatment). New `examples/meshtemp/RegionScope.{h,cpp}`: `begin()`
+      derives the 16-byte region key once at boot (`mesh::Utils::sha256()` of
+      `"#" + MESHTEMP_REGION` - the exact same call WaterChannel.cpp already uses
+      for the channel key, no new crypto path), `active()` is just
+      `MESHTEMP_REGION[0] != 0`, `codesFor(pkt, codes)` calls
+      `TransportKey::calcTransportCode()` (reused as-is from
+      `src/helpers/TransportKeyStore.h` - already compiled into this env via the
+      generic `src/helpers/*` sources, confirmed via existing `.pio/build/.../
+      TransportKeyStore.cpp.o`, no new lib_deps needed) and sets `codes[1] = 0`,
+      mirroring `simple_repeater/MyMesh::sendFloodScoped()`'s own convention
+      exactly. `main.cpp`: `RegionScope::begin()` called in `setup()` right after
+      `the_mesh.begin(fs)`, before the boot advert; `meshtempSendChannelData()`
+      now branches on `RegionScope::active()` to call the scoped or plain
+      `sendFlood()` overload. `SensorMesh.cpp`'s `sendSelfAdvertisement()`: the
+      `flood == false` branch (confirmed via grep - the *only* call site is
+      `main.cpp`'s boot-time `sendSelfAdvertisement(16000, false)`, so this
+      exactly and only covers "the first boot advert", nothing else) now uses the
+      scoped `sendZeroHop()` overload when `RegionScope::active()`.
+* [x] Document in README: what region scoping does, that repeaters must allow the
+      region or messages die, viewers set their own region or empty
+      New "Region scoping" section in `examples/meshtemp/README.md` (between "How
+      the channel name works" and "Message format") plus a `MESHTEMP_REGION` bullet
+      in "Configuration". Also added to CLAUDE.md's "Radio" section (its own house
+      rule: "CLAUDE.md is updated in the same commit as the code") since this is an
+      architecture-level radio decision, same tier as the channel-key one already
+      documented there.
+* [x] Rebuild both envs with proof, commit, push
+      Both `-t create_uf2`: `RAK_4631_meshtemp` SUCCESS (49.75s, incremental -
+      only the 5 touched/new files recompiled), `RAK_4631_meshtemp_sleep` SUCCESS
+      (42.30s). Zero errors/warnings grepped in both logs. `.uf2` timestamps
+      confirmed current (13:56:59 / 13:57:48, checked at 13:57:55) at
+      `.pio\build\RAK_4631_meshtemp\firmware.uf2` and
+      `.pio\build\RAK_4631_meshtemp_sleep\firmware.uf2`. String `se17` confirmed
+      present (`grep -a -o`) in both `.uf2` files - proves the literal constant
+      reached the binary; the HMAC/derivation logic itself is verified by reading
+      the source (see research notes above), not by a runtime self-check, since
+      unlike the channel key there's no independently-known-answer test to check
+      a *transport code* against (it depends on the exact packet bytes, which
+      differ per send). Version left at 0.5.0 - same "flagged, not assumed" pattern
+      as the channel-name change above; this one changes on-wire packet header
+      bits (route type + transport codes) for every send, which reads more clearly
+      as a protocol-level change than the channel rename did.
+
 ## Round 6 – Field test before deployment
 
 * [ ] 48 h dry test on balcony on battery only, all hourly transmissions received
