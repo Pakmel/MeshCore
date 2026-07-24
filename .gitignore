@@ -17,3 +17,6 @@ compile_commands.json
 .venv/
 venv/
 platformio.local.ini
+
+# Local-only working docs (session memory, dev notes) - not published.
+dev/
