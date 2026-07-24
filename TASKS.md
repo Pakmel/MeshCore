@@ -210,8 +210,10 @@ weekends and pastes results back.
       (see Round 3) - if it says FAIL, stop and report back before trusting
       any channel message, something is wrong with the key derivation.
 * [ ] In the MeshCore mobile app, add a channel matching `MESHTEMP_CHANNEL_NAME`
-      in `src/meshtemp_config.h` byte-for-byte, including the `#` (currently
-      `#tempsensortest` - see note below, name may still change before release).
+      in `src/meshtemp_config.h` byte-for-byte, including the `#` (now
+      `#MeshTemp`, final - see "Production identity set" below). Remember
+      hashtag channel names are case sensitive: `#meshtemp` is a different
+      channel with a different key.
 * [ ] Watch for `[channel send] Water: ...` lines every 2 minutes in serial,
       and confirm the same message shows up in the app's channel via at least
       one KSD repeater (not just a direct link to your phone).
@@ -526,6 +528,26 @@ weekends and pastes results back.
       `.pio\build\RAK_4631_meshtemp_sleep\firmware.uf2`. String
       `MeshTemp 0.5.0 (MeshCore v1.16.0)` confirmed present (`grep -a -o`)
       in both.
+
+## Production identity set (2026-07-24)
+
+* [x] `MESHTEMP_CHANNEL_NAME` changed from `#tempsensortest` to `#MeshTemp` -
+      this is the final channel name (not a placeholder like the earlier
+      `#watertemp`/`#tempsensortest` choices). Hashtag channel names are case
+      sensitive: the app/MeshMonitor entry must match `#MeshTemp` byte-for-byte;
+      `#meshtemp` would derive a different key and silently receive nothing.
+      `examples/meshtemp/README.md` updated everywhere the channel is
+      mentioned (Configuration section, "How the channel name works" section).
+* [x] Default node name (`ADVERT_NAME` in `variants/rak4631/platformio.ini`,
+      the only place this lives - see the Rename section's note on
+      `MESHTEMP_DEFAULT_NAME` not existing as a separate macro) changed from
+      `"MeshTemp"` to `"MeshTemp1"`.
+* [x] Both envs rebuilt with `-t create_uf2`, proof recorded per the build
+      working rule (build SUCCESS output, `.uf2` timestamps, `MeshTemp` string
+      check) - see chat/commit for the actual output. Version left at 0.5.0 -
+      not bumped as part of this change since it wasn't requested; flagging
+      that CLAUDE.md's versioning rule would call a channel-key change at
+      least a minor bump while major is 0, if/when a version bump is wanted.
 
 ## Round 6 – Field test before deployment
 

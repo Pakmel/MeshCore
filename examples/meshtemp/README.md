@@ -50,9 +50,9 @@ Flashing: double-tap reset for the bootloader, then copy the built `.uf2` from
 All parameters are compile-time constants in `src/meshtemp_config.h` — there is no
 remote administration, any change needs a USB reflash:
 
-* `MESHTEMP_CHANNEL_NAME` — the hashtag channel name, including the `#`. Currently
-  set to a test value; the final name is decided at release — this constant is the
-  only place it lives.
+* `MESHTEMP_CHANNEL_NAME` — the hashtag channel name, including the `#`. Final
+  production value: `#MeshTemp` (replaces the earlier `#tempsensortest` test
+  channel) — this constant is the only place it lives.
 * `MESHTEMP_SEND_INTERVAL_SECS` — push interval (1 hour)
 * `RETRY_WINDOW_S` — how long to listen for a repeater echo before retrying
 * `PLAUSIBLE_MIN_C` / `PLAUSIBLE_MAX_C` — plausibility bounds for the reading
@@ -68,7 +68,9 @@ including the `#`. This is verified against a known example at every boot
 `[channel key self-check] ... PASS`/`FAIL`.
 
 To receive the node's messages, add a channel with the **exact same name**
-(byte-for-byte, including the `#`) in the MeshCore app or MeshMonitor.
+(byte-for-byte, including the `#`) in the MeshCore app or MeshMonitor. Hashtag
+channel names are case sensitive: the app entry must match `#MeshTemp` exactly —
+`#meshtemp` is a different channel with a different key.
 
 Hashtag channels are public by design — anyone who knows the name can read and
 write to it. That's an accepted tradeoff for an outdoor temperature reading; don't
