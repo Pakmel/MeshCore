@@ -478,6 +478,20 @@ void SensorMesh::onAnonDataRecv(mesh::Packet* packet, const uint8_t* secret, con
   }
 }
 
+ClientInfo* SensorMesh::registerTransientPeer(const mesh::Identity& id) {
+  ClientInfo* c = acl.putClient(id, PERM_ACL_GUEST);
+  if (c) {
+    self_id.calcSharedSecret(c->shared_secret, id);
+  }
+  return c;
+}
+
+ClientInfo* SensorMesh::resolvePeer(int sender_idx) {
+  int i = matching_peer_indexes[sender_idx];
+  if (i < 0 || i >= acl.getNumClients()) return NULL;
+  return acl.getClientByIdx(i);
+}
+
 int SensorMesh::searchPeersByHash(const uint8_t* hash) {
   int n = 0;
   for (int i = 0; i < acl.getNumClients() && n < MAX_SEARCH_RESULTS; i++) {

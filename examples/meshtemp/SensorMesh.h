@@ -92,6 +92,26 @@ public:
 
   float getTelemValue(uint8_t channel, uint8_t type);
 
+  // `acl`/`matching_peer_indexes` are both private below, so a composed
+  // helper (not a subclass) that only holds a SensorMesh& - e.g.
+  // BootTimeSync, registering a repeater discovered at runtime to receive
+  // its PAYLOAD_TYPE_RESPONSE reply - needs these public, the same way
+  // createControlData()/sendZeroHop()/etc. already are.
+  //
+  // registerTransientPeer(): registers `id` as PERM_ACL_GUEST (the
+  // framework's own "not a real contact, don't persist" role - see
+  // ClientACL::applyPermissions) and fills in shared_secret, so the
+  // existing searchPeersByHash()/getPeerSharedSecret()/onPeerDataRecv()
+  // path picks it up with no other changes needed. Never calls acl.save() -
+  // this never touches flash.
+  ClientInfo* registerTransientPeer(const mesh::Identity& id);
+
+  // resolvePeer(): resolves the `sender_idx` an onPeerDataRecv() override
+  // receives back into the actual ClientInfo, the same way
+  // SensorMesh::onPeerDataRecv() itself does internally. Returns NULL for
+  // an invalid index, same bounds check as the existing internal use.
+  ClientInfo* resolvePeer(int sender_idx);
+
 protected:
   // current telemetry data queries
   float getVoltage(uint8_t channel) { return getTelemValue(channel, LPP_VOLTAGE); }

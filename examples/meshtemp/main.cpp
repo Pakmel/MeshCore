@@ -15,10 +15,13 @@
   #include "WaterTempSensor.h"
   #include "WaterChannel.h"
   #include "EchoRetry.h"
+  #include "BootTimeSync.h"
   #include "meshtemp_config.h"
+  #include <helpers/AdvertDataHelpers.h>
   static WaterTempSensor water_sensor(WB_IO1);
   static WaterChannel water_channel;
   static WaterReading latest_reading = { WaterReadingCase::SENSOR_ERROR, 0.0f, -127 };  // no reading yet
+  static BootTimeSync boot_time_sync;
 
   // ------------------------------------------------------------------
   // Shared read -> send -> retry cycle. Identical, unconditional code for
@@ -78,6 +81,39 @@ protected:
       pkt->calculatePacketHash(hash);
       echo_retry.onPacketSeen(hash);
     }
+  }
+
+  // Passive time sync (bonus layer, independent of BootTimeSync's active
+  // discovery+request flow): any heard repeater advert also carries a
+  // usable timestamp. Both paths funnel through
+  // boot_time_sync.applyIfNewer(), so they agree on synced() and log the
+  // same way regardless of which one gets there first.
+  void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
+                     const uint8_t* app_data, size_t app_data_len) override {
+    AdvertDataParser parser(app_data, app_data_len);
+    if (parser.isValid() && parser.getType() == ADV_TYPE_REPEATER) {
+      boot_time_sync.applyIfNewer(*this, timestamp, parser.hasName() ? parser.getName() : "repeater advert");
+    }
+  }
+
+  // Routes CTL_TYPE_NODE_DISCOVER_RESP packets to boot_time_sync; chains to
+  // SensorMesh's own override (answers "who's a sensor" requests about us -
+  // unrelated, left untouched) either way.
+  void onControlDataRecv(mesh::Packet* packet) override {
+    boot_time_sync.onControlData(*this, packet);
+    SensorMesh::onControlDataRecv(packet);
+  }
+
+  // Routes our own clock-request's PAYLOAD_TYPE_RESPONSE reply to
+  // boot_time_sync; chains to SensorMesh's own override (handles
+  // PAYLOAD_TYPE_REQ / admin TXT_MSG commands from real contacts -
+  // unrelated, left untouched) either way.
+  void onPeerDataRecv(mesh::Packet* packet, uint8_t type, int sender_idx, const uint8_t* secret, uint8_t* data, size_t len) override {
+    if (type == PAYLOAD_TYPE_RESPONSE) {
+      ClientInfo* from = resolvePeer(sender_idx);
+      if (from) boot_time_sync.onPeerResponse(*this, from, data, len);
+    }
+    SensorMesh::onPeerDataRecv(packet, type, sender_idx, secret, data, len);
   }
 #endif
 
@@ -146,7 +182,16 @@ static bool meshtempSendCurrentReadingAndArm() {
   WaterChannel::formatMessage(msg, sizeof(msg), latest_reading, batt_v);
   int msg_len = strlen(msg);
 
-  uint32_t timestamp = the_mesh.getRTCClock()->getCurrentTime();
+  // If the clock has never been synced since cold boot, its value is just
+  // VolatileRTCClock's hardcoded startup default (a fixed, wrong date - see
+  // src/helpers/ArduinoHelpers.h), not real time. Sending it would look like
+  // a plausible-but-wrong reading date to anyone downstream. Send 0 instead
+  // - an obviously-unset sentinel - never withhold the reading itself over
+  // this; a wrong timestamp is data, a withheld reading is data loss.
+  uint32_t timestamp = boot_time_sync.synced() ? the_mesh.getRTCClock()->getCurrentTime() : 0;
+  if (timestamp == 0) {
+    Serial.println("[time sync] still unsynced - sending reading with timestamp=0");
+  }
   memcpy(pending_data, &timestamp, 4);
   pending_data[4] = 0;  // flags/attempt byte, unused here
   memcpy(&pending_data[5], msg, msg_len);
@@ -173,6 +218,11 @@ static void meshtempStartCycle() {
   if (cycle_state != CycleState::IDLE) return;
 
   cycle_started_at = millis();
+
+  // Time sync runs first, but is never a gate: this only fires a discovery
+  // broadcast and returns immediately (no-op once already synced()) - it
+  // never delays or blocks the read/send below, on this cycle or any other.
+  boot_time_sync.retryIfNeeded(the_mesh);
 
   if (water_sensor.detected()) {
     water_sensor.startConversion();
@@ -422,6 +472,7 @@ void loop() {
 #endif
 
 #ifdef MESHTEMP_DS18B20
+  boot_time_sync.tick(the_mesh);
   meshtempCycleTick();
 
 #ifdef MESHTEMP_SLEEP_CYCLE
