@@ -31,3 +31,22 @@
 // is attached, matching the plain flood/zero-hop route used before this
 // feature existed.
 #define MESHTEMP_REGION "se17"
+
+// Time sync tuning (see examples/meshtemp/BootTimeSync.h for the full design
+// and examples/meshtemp/README.md's "Time sync" section).
+//
+// First sync (from cold boot, clock never yet trusted): two independent
+// sources (repeater clock-request replies and/or repeater advert
+// timestamps) must agree within this many seconds before either is trusted.
+// If only one source is ever heard, it's accepted alone once this many
+// seconds' worth of retry attempts have passed without a second one
+// corroborating it - see BootTimeSync's single-source fallback.
+#define TIME_AGREEMENT_WINDOW_SECS 600
+
+// Once synced: the clock is trusted, but not blindly - a proposed
+// adjustment (forward OR backward) is only applied if it's within this many
+// seconds of the current clock. A single misbehaving/wrong-clocked repeater
+// can otherwise nudge an already-good clock arbitrarily far off with one
+// bad reading; this bounds the damage from any one source to a plausible
+// drift-correction-sized nudge.
+#define TIME_SANITY_MAX_JUMP_SECS 300

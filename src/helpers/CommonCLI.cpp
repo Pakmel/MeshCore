@@ -230,15 +230,17 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       _callbacks->sendSelfAdvertisement(1500, true);  // longer delay, give CLI response time to be sent first
       strcpy(reply, "OK - Advert sent");
     } else if (memcmp(command, "clock sync", 10) == 0) {
-      uint32_t curr = getRTCClock()->getCurrentTime();
-      if (sender_timestamp > curr) {
-        getRTCClock()->setCurrentTime(sender_timestamp + 1);
-        uint32_t now = getRTCClock()->getCurrentTime();
-        DateTime dt = DateTime(now);
-        sprintf(reply, "OK - clock set: %02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
-      } else {
-        strcpy(reply, "ERR: clock cannot go backwards");
-      }
+      // Forward-only removed: this command only runs for an admin who
+      // authenticated (password, over serial or remote admin) and
+      // deliberately typed it - a stronger trust boundary than any
+      // unauthenticated mesh-level sync path, so it's allowed to correct
+      // the clock in either direction rather than being blocked by a
+      // "never go backwards" rule meant for opportunistic/unauthenticated
+      // sources.
+      getRTCClock()->setCurrentTime(sender_timestamp + 1);
+      uint32_t now = getRTCClock()->getCurrentTime();
+      DateTime dt = DateTime(now);
+      sprintf(reply, "OK - clock set: %02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
     } else if (memcmp(command, "start ota", 9) == 0) {
       if (!_board->startOTAUpdate(_prefs->node_name, reply)) {
         strcpy(reply, "Error");
@@ -248,16 +250,13 @@ void CommonCLI::handleCommand(uint32_t sender_timestamp, char* command, char* re
       DateTime dt = DateTime(now);
       sprintf(reply, "%02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
     } else if (memcmp(command, "time ", 5) == 0) {  // set time (to epoch seconds)
+      // Forward-only removed - see the "clock sync" comment above, same
+      // reasoning applies here.
       uint32_t secs = _atoi(&command[5]);
-      uint32_t curr = getRTCClock()->getCurrentTime();
-      if (secs > curr) {
-        getRTCClock()->setCurrentTime(secs);
-        uint32_t now = getRTCClock()->getCurrentTime();
-        DateTime dt = DateTime(now);
-        sprintf(reply, "OK - clock set: %02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
-      } else {
-        strcpy(reply, "(ERR: clock cannot go backwards)");
-      }
+      getRTCClock()->setCurrentTime(secs);
+      uint32_t now = getRTCClock()->getCurrentTime();
+      DateTime dt = DateTime(now);
+      sprintf(reply, "OK - clock set: %02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.day(), dt.month(), dt.year());
     } else if (memcmp(command, "neighbors", 9) == 0) {
       _callbacks->formatNeighborsReply(reply);
     } else if (memcmp(command, "neighbor.remove ", 16) == 0) {

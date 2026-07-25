@@ -86,13 +86,14 @@ protected:
   // Passive time sync (bonus layer, independent of BootTimeSync's active
   // discovery+request flow): any heard repeater advert also carries a
   // usable timestamp. Both paths funnel through
-  // boot_time_sync.applyIfNewer(), so they agree on synced() and log the
-  // same way regardless of which one gets there first.
+  // boot_time_sync.proposeTime(), so a lone advert can't seed the clock
+  // alone before the first sync any more than a lone active reply can - see
+  // BootTimeSync.h for the full two-source-then-sanity-window design.
   void onAdvertRecv(mesh::Packet* packet, const mesh::Identity& id, uint32_t timestamp,
                      const uint8_t* app_data, size_t app_data_len) override {
     AdvertDataParser parser(app_data, app_data_len);
     if (parser.isValid() && parser.getType() == ADV_TYPE_REPEATER) {
-      boot_time_sync.applyIfNewer(*this, timestamp, parser.hasName() ? parser.getName() : "repeater advert");
+      boot_time_sync.proposeTime(*this, id, timestamp, parser.hasName() ? parser.getName() : "repeater advert");
     }
   }
 

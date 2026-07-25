@@ -129,6 +129,8 @@ is no remote configuration of these, any change needs a USB reflash:
 | `RETRY_WINDOW_S` | `meshtemp_config.h` | `30` (seconds) | How long to listen for a repeater echo of this node's own packet before resending exactly once. |
 | `PLAUSIBLE_MIN_C` / `PLAUSIBLE_MAX_C` | `meshtemp_config.h` | `-5.0` / `45.0` | Plausibility bounds for a reading. Outside this range the value is still sent (it's real sensor data, not an error) but flagged with `?` — see "Message format" case 2. |
 | `ADVERT_NAME` | `variants/rak4631/platformio.ini` (a build flag, **not** in `meshtemp_config.h` — there's no separate default-name macro) | `"MeshTemp1"` | The node's default advertised name. Can be changed after flashing without a reflash — see "Renaming your node" below. |
+| `TIME_AGREEMENT_WINDOW_SECS` | `meshtemp_config.h` | `600` (10 min) | See "Time sync" below. Max difference allowed between two independent time sources before they're trusted together on first sync. |
+| `TIME_SANITY_MAX_JUMP_SECS` | `meshtemp_config.h` | `300` (5 min) | See "Time sync" below. Once synced, the largest single adjustment (either direction) accepted from any one source before it's rejected as implausible. |
 
 ### Renaming your node
 
@@ -234,6 +236,70 @@ After sending, the node listens for `RETRY_WINDOW_S` seconds for a repeater to
 bounce its own packet back (matched by packet hash). If no echo is heard, it resends
 exactly once, then sleeps regardless of outcome. Serial logs one of:
 `[retry] repeat heard`, `[retry] retry sent`, `[retry] gave up`.
+
+## Time sync
+
+There's no battery-backed RTC on the RAK19007, so the clock starts every
+cold boot at a fixed, wrong default and has to be set from the mesh. Rather
+than trust the first thing that answers, it's a source-skeptical two-phase
+process:
+
+**Phase 1 — first sync (clock never yet trusted).** Both an active
+mechanism and a passive one feed into the same decision:
+
+* **Active:** at each cycle while unsynced, the node broadcasts one
+  zero-hop node-discovery request asking for repeaters, then sends a
+  MeshCore "remote clock" request (`ANON_REQ_TYPE_BASIC`) to up to two of
+  the repeaters that answer.
+* **Passive:** any repeater's regular self-advert also carries a
+  timestamp, for free, no request needed.
+
+Both feed the same pool of candidate sources. The decision:
+
+* **Two sources agree** (within `TIME_AGREEMENT_WINDOW_SECS`, default 600s,
+  of each other) — apply the **earlier** of the two, unrestricted direction
+  (nothing was trusted yet, so there's no "forward-only" to violate).
+* **Two sources disagree** beyond that window — trust neither. Both are
+  logged by name, discarded, and the node tries again next cycle.
+* **Only one source ever answers**, after the first cycle plus one full
+  retry cycle — accepted alone, logged as `single-source`, rather than
+  waiting indefinitely for a second source that may not exist.
+* **No source answers** — keep retrying every cycle, no limit. Sending
+  never waits on this: unsynced readings go out with timestamp `0` (an
+  unambiguous "unset" marker) rather than being held back or sent with a
+  plausible-looking wrong date.
+
+**Phase 2 — already synced.** Every subsequently proposed time (from a
+repeater's advert, most commonly — the active mechanism stops once synced,
+this ongoing correction is the passive path's job) is checked against a
+**symmetric sanity window**: applied immediately, forward *or* backward, if
+it's within `TIME_SANITY_MAX_JUMP_SECS` (default 300s) of the current
+clock; rejected and logged (naming the source) if the jump is bigger than
+that in either direction. Backward correction is fully supported — nothing
+in this project's own sync path is forward-only.
+
+Both request types the active mechanism uses are answered by repeater
+firmware without any password (confirmed by reading
+`examples/simple_repeater/MyMesh.cpp` — gated only by rate limiters). That's
+exactly why phase 1 never trusts a single answer alone: anyone can stand up
+a repeater and answer these.
+
+**Known limitation:** phase 1's two-source check only catches *disagreement*
+between sources, not a single repeater that's simply wrong. If only one
+repeater is ever reachable, its clock is trusted as-is (`single-source`
+fallback) — a lone misconfigured repeater can seed a wrong initial time this
+way, and it'll stick until either a second, disagreeing-enough source shows
+up to force a re-evaluation, or the node restarts and gets a fresh chance at
+two-source agreement. Phase 2's ±300s sanity window bounds *ongoing* damage
+from a bad source once synced, but does nothing to validate the *initial*
+value if only one source was ever available.
+
+`set name`-style admin commands (`clock sync`, `time <epoch>` — see
+"Renaming your node" above for how remote admin access works) are also not
+forward-only: since those require a password-authenticated admin
+deliberately issuing the command, they're allowed to move the clock either
+direction without the sanity window that applies to unauthenticated mesh
+sources.
 
 ## Troubleshooting
 

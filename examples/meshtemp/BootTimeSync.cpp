@@ -20,32 +20,130 @@ static void logDateTime(uint32_t epoch_secs) {
   Serial.printf("%02d:%02d:%02d - %d/%d/%d UTC", dt.hour(), dt.minute(), dt.second(), dt.day(), dt.month(), dt.year());
 }
 
-bool BootTimeSync::applyIfNewer(SensorMesh& mesh, uint32_t new_time, const char* source_label) {
-  uint32_t curr = mesh.getRTCClock()->getCurrentTime();
-  if (new_time <= curr) {
-    Serial.print("[time sync] ");
-    Serial.print(source_label);
-    Serial.println(" not ahead of our clock, ignored");
-    return false;
+int BootTimeSync::findOrAddCandidateSlot(const mesh::Identity& id) {
+  for (int i = 0; i < 2; i++) {
+    if (_candidates[i].have_id && _candidates[i].id.matches(id)) return i;
+  }
+  for (int i = 0; i < 2; i++) {
+    if (!_candidates[i].have_id) {
+      _candidates[i].have_id = true;
+      _candidates[i].id = id;
+      return i;
+    }
+  }
+  return -1;   // both slots already claimed by other, distinct sources
+}
+
+int BootTimeSync::countValidCandidates() const {
+  int n = 0;
+  if (_candidates[0].have_response) n++;
+  if (_candidates[1].have_response) n++;
+  return n;
+}
+
+void BootTimeSync::resetCandidates() {
+  _candidates[0] = Candidate();
+  _candidates[1] = Candidate();
+}
+
+void BootTimeSync::proposeTime(SensorMesh& mesh, const mesh::Identity& source_id, uint32_t new_time, const char* source_label) {
+  if (_synced) {
+    // PHASE 2: already trusted once - symmetric sanity window, either direction.
+    uint32_t curr = mesh.getRTCClock()->getCurrentTime();
+    int64_t delta = (int64_t)new_time - (int64_t)curr;
+    uint32_t abs_delta = (uint32_t)(delta < 0 ? -delta : delta);
+
+    if (abs_delta <= TIME_SANITY_MAX_JUMP_SECS) {
+      mesh.getRTCClock()->setCurrentTime(new_time);
+      Serial.print("[time sync] adjusted from ");
+      Serial.print(source_label);
+      Serial.print(" (");
+      Serial.print(delta >= 0 ? "+" : "-");
+      Serial.print(abs_delta);
+      Serial.print("s): ");
+      logDateTime(curr);
+      Serial.print(" -> ");
+      logDateTime(new_time);
+      Serial.println();
+    } else {
+      Serial.print("[time sync] rejected implausible jump from ");
+      Serial.print(source_label);
+      Serial.print(": ours=");
+      logDateTime(curr);
+      Serial.print(" proposed=");
+      logDateTime(new_time);
+      Serial.print(" (delta ");
+      Serial.print(abs_delta);
+      Serial.print("s > TIME_SANITY_MAX_JUMP_SECS=");
+      Serial.print((uint32_t)TIME_SANITY_MAX_JUMP_SECS);
+      Serial.println("s)");
+    }
+    return;
   }
 
-  // +1 mirrors CommonCLI's own "clock sync" command convention exactly
-  // (src/helpers/CommonCLI.cpp) - same forward-only semantics, same fudge.
-  uint32_t applied = new_time + 1;
-  mesh.getRTCClock()->setCurrentTime(applied);
+  // PHASE 1: gather up to 2 independent candidates before trusting any one.
+  int slot = findOrAddCandidateSlot(source_id);
+  if (slot < 0) return;   // already have 2 distinct sources this round, ignore further ones
 
-  bool was_synced = _synced;
-  _synced = true;
+  strncpy(_candidates[slot].label, source_label, sizeof(_candidates[slot].label) - 1);
+  _candidates[slot].have_response = true;
+  _candidates[slot].timestamp = new_time;
 
-  Serial.print("[time sync] ");
-  Serial.print(was_synced ? "re-synced from " : "synced from ");
+  Serial.print("[time sync] candidate: ");
   Serial.print(source_label);
-  Serial.print(": ");
-  logDateTime(curr);
-  Serial.print(" -> ");
-  logDateTime(applied);
+  Serial.print(" reports ");
+  logDateTime(new_time);
   Serial.println();
-  return true;
+
+  evaluateTwoIfReady(mesh);
+}
+
+void BootTimeSync::evaluateTwoIfReady(SensorMesh& mesh) {
+  if (countValidCandidates() < 2) return;
+
+  uint32_t t0 = _candidates[0].timestamp;
+  uint32_t t1 = _candidates[1].timestamp;
+  uint32_t diff = t0 > t1 ? t0 - t1 : t1 - t0;
+
+  if (diff <= TIME_AGREEMENT_WINDOW_SECS) {
+    bool zero_earlier = t0 <= t1;
+    uint32_t earlier = zero_earlier ? t0 : t1;
+    const char* earlier_label = zero_earlier ? _candidates[0].label : _candidates[1].label;
+
+    mesh.getRTCClock()->setCurrentTime(earlier);
+    _synced = true;
+
+    Serial.print("[time sync] synced (2-source agreement, delta ");
+    Serial.print(diff);
+    Serial.print("s): ");
+    Serial.print(_candidates[0].label);
+    Serial.print("=");
+    logDateTime(t0);
+    Serial.print(", ");
+    Serial.print(_candidates[1].label);
+    Serial.print("=");
+    logDateTime(t1);
+    Serial.print(" - applying earlier (");
+    Serial.print(earlier_label);
+    Serial.println(")");
+  } else {
+    Serial.print("[time sync] sources disagree (delta ");
+    Serial.print(diff);
+    Serial.print("s > TIME_AGREEMENT_WINDOW_SECS=");
+    Serial.print((uint32_t)TIME_AGREEMENT_WINDOW_SECS);
+    Serial.print("s): ");
+    Serial.print(_candidates[0].label);
+    Serial.print("=");
+    logDateTime(t0);
+    Serial.print(", ");
+    Serial.print(_candidates[1].label);
+    Serial.print("=");
+    logDateTime(t1);
+    Serial.println(" - trusting neither, retrying");
+  }
+
+  resetCandidates();
+  _state = State::IDLE;
 }
 
 void BootTimeSync::retryIfNeeded(SensorMesh& mesh) {
@@ -63,7 +161,9 @@ void BootTimeSync::retryIfNeeded(SensorMesh& mesh) {
   auto pkt = mesh.createControlData(data, sizeof(data));
   if (pkt) {
     mesh.sendZeroHop(pkt);
-    Serial.println("[time sync] still unsynced - discovery sent, listening for a repeater");
+    Serial.print("[time sync] still unsynced - discovery sent (attempt ");
+    Serial.print(_sync_attempts + 1);
+    Serial.println("), listening for repeaters");
     _state = State::WAITING_FOR_DISCOVERY;
     _deadline = millis() + BOOT_SYNC_DISCOVERY_TIMEOUT_MS;
   } else {
@@ -90,16 +190,40 @@ void BootTimeSync::onControlData(SensorMesh& mesh, const mesh::Packet* pkt) {
   mesh::Identity id(&pkt->payload[6]);
   if (id.matches(mesh.self_id)) return;   // ignore our own reflected packet, if any
 
-  _repeater_id = id;
-  Serial.println("[time sync] repeater found, requesting its clock");
-  sendClockRequest(mesh);
+  int slot = findOrAddCandidateSlot(id);
+  if (slot < 0) return;   // already have 2 distinct candidates this attempt
+
+  if (_candidates[slot].requested || _candidates[slot].have_response) return;   // already asked, or already answered (e.g. via a passive advert)
+
+  char hex[9];
+  mesh::Utils::toHex(hex, id.pub_key, 4);
+  snprintf(_candidates[slot].label, sizeof(_candidates[slot].label), "repeater %s (active)", hex);
+  _candidates[slot].requested = true;
+
+  Serial.print("[time sync] repeater found (");
+  Serial.print(_candidates[slot].label);
+  Serial.println("), requesting its clock");
+
+  sendClockRequestForSlot(mesh, slot);
+
+  if (_candidates[0].have_id && _candidates[1].have_id) {
+    // Both slots claimed (whether via a request just sent, or a passive
+    // advert that already answered one of them) - stop listening for more
+    // discovery responses this attempt and give outstanding requests their
+    // own window.
+    _state = State::WAITING_FOR_CLOCK;
+    _deadline = millis() + BOOT_SYNC_CLOCK_TIMEOUT_MS;
+  }
 }
 
-void BootTimeSync::sendClockRequest(SensorMesh& mesh) {
-  ClientInfo* peer = mesh.registerTransientPeer(_repeater_id);
+void BootTimeSync::sendClockRequestForSlot(SensorMesh& mesh, int slot) {
+  Candidate& c = _candidates[slot];
+  ClientInfo* peer = mesh.registerTransientPeer(c.id);
   if (!peer) {
-    Serial.println("[time sync] ERROR: could not register repeater as peer, will retry next cycle");
-    _state = State::IDLE;
+    Serial.print("[time sync] ERROR: could not register ");
+    Serial.print(c.label);
+    Serial.println(" as peer");
+    c.requested = false;
     return;
   }
 
@@ -108,52 +232,107 @@ void BootTimeSync::sendClockRequest(SensorMesh& mesh) {
   memcpy(data, &my_now, 4);          // becomes the reply's tag, per handleAnonClockReq
   data[4] = ANON_REQ_TYPE_BASIC;
   data[5] = 0;                       // reply_path_len=0 -> repeater replies zero-hop, direct back to us
-  _clock_req_tag = my_now;
+  c.clock_req_tag = my_now;
 
-  auto pkt = mesh.createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, mesh.self_id, _repeater_id, peer->shared_secret, data, sizeof(data));
+  auto pkt = mesh.createAnonDatagram(PAYLOAD_TYPE_ANON_REQ, mesh.self_id, c.id, peer->shared_secret, data, sizeof(data));
   if (pkt) {
     mesh.sendZeroHop(pkt);
-    _state = State::WAITING_FOR_CLOCK;
-    _deadline = millis() + BOOT_SYNC_CLOCK_TIMEOUT_MS;
   } else {
-    Serial.println("[time sync] ERROR: could not build clock request packet, will retry next cycle");
-    _state = State::IDLE;
+    Serial.print("[time sync] ERROR: could not build clock request for ");
+    Serial.println(c.label);
+    c.requested = false;
   }
 }
 
 void BootTimeSync::onPeerResponse(SensorMesh& mesh, const ClientInfo* from, const uint8_t* data, size_t len) {
-  if (_state != State::WAITING_FOR_CLOCK) return;
-  if (!from->id.matches(_repeater_id)) return;
   if (len < 8) return;
+
+  int slot = -1;
+  for (int i = 0; i < 2; i++) {
+    if (_candidates[i].have_id && _candidates[i].requested && !_candidates[i].have_response
+        && _candidates[i].id.matches(from->id)) {
+      slot = i;
+      break;
+    }
+  }
+  if (slot < 0) return;
 
   uint32_t tag;
   memcpy(&tag, data, 4);
-  if (tag != _clock_req_tag) return;
+  if (tag != _candidates[slot].clock_req_tag) return;
 
   uint32_t repeater_now;
   memcpy(&repeater_now, &data[4], 4);
 
-  // The discovery response only carries a pubkey, not a human name - use a
-  // short hex prefix to identify which repeater this was, in the log.
-  char id_hex[9];
-  mesh::Utils::toHex(id_hex, _repeater_id.pub_key, 4);
-  char label[48];
-  snprintf(label, sizeof(label), "repeater %s (active request)", id_hex);
+  // proposeTime() re-finds this same slot (identity already registered
+  // above) and does the phase 1/2 evaluation - single place that logic
+  // lives, shared with the passive advert path.
+  proposeTime(mesh, _candidates[slot].id, repeater_now, _candidates[slot].label);
+}
 
-  applyIfNewer(mesh, repeater_now, label);
-  _state = State::IDLE;   // attempt resolved either way; retryIfNeeded() no-ops from here if now synced()
+void BootTimeSync::finishAttempt(SensorMesh& mesh) {
+  _sync_attempts++;
+  int valid = countValidCandidates();
+
+  if (valid >= 2) {
+    // Shouldn't normally reach here - evaluateTwoIfReady() already fires as
+    // soon as the 2nd response lands - but cover it defensively.
+    evaluateTwoIfReady(mesh);
+    _state = State::IDLE;
+    return;
+  }
+
+  if (valid == 1) {
+    int i = _candidates[0].have_response ? 0 : 1;
+    if (_sync_attempts >= 2) {
+      mesh.getRTCClock()->setCurrentTime(_candidates[i].timestamp);
+      _synced = true;
+      Serial.print("[time sync] single-source (no second source after ");
+      Serial.print(_sync_attempts);
+      Serial.print(" attempts) - accepting ");
+      Serial.print(_candidates[i].label);
+      Serial.print(": ");
+      logDateTime(_candidates[i].timestamp);
+      Serial.println();
+      resetCandidates();
+    } else {
+      Serial.print("[time sync] have 1 source so far (");
+      Serial.print(_candidates[i].label);
+      Serial.println(") - waiting for a second, will retry next cycle");
+      // keep this candidate; the other (empty) slot stays open for a
+      // future attempt to find a second, different source.
+    }
+  } else {
+    Serial.println("[time sync] no repeater responded this attempt - will retry next cycle");
+    resetCandidates();
+  }
+
+  _state = State::IDLE;
 }
 
 void BootTimeSync::tick(SensorMesh& mesh) {
+  if (_synced) return;   // active ladder's job is done; ongoing correction is proposeTime()'s phase 2, driven by the passive path
+
   if (_state == State::WAITING_FOR_DISCOVERY) {
     if ((long)(millis() - _deadline) >= 0) {
-      Serial.println("[time sync] no repeater found this attempt - will retry next cycle");
-      _state = State::IDLE;
+      bool any_requested = _candidates[0].requested || _candidates[1].requested;
+      if (any_requested) {
+        _state = State::WAITING_FOR_CLOCK;
+        _deadline = millis() + BOOT_SYNC_CLOCK_TIMEOUT_MS;
+      } else {
+        finishAttempt(mesh);
+      }
     }
   } else if (_state == State::WAITING_FOR_CLOCK) {
     if ((long)(millis() - _deadline) >= 0) {
-      Serial.println("[time sync] repeater found but no clock reply - will retry next cycle");
-      _state = State::IDLE;
+      for (int i = 0; i < 2; i++) {
+        if (_candidates[i].have_id && _candidates[i].requested && !_candidates[i].have_response) {
+          Serial.print("[time sync] no clock reply from ");
+          Serial.println(_candidates[i].label);
+          _candidates[i] = Candidate();   // free this slot for a future attempt
+        }
+      }
+      finishAttempt(mesh);
     }
   }
 }
