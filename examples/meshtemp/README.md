@@ -130,7 +130,9 @@ is no remote configuration of these, any change needs a USB reflash:
 | `PLAUSIBLE_MIN_C` / `PLAUSIBLE_MAX_C` | `meshtemp_config.h` | `-5.0` / `45.0` | Plausibility bounds for a reading. Outside this range the value is still sent (it's real sensor data, not an error) but flagged with `?` — see "Message format" case 2. |
 | `ADVERT_NAME` | `variants/rak4631/platformio.ini` (a build flag, **not** in `meshtemp_config.h` — there's no separate default-name macro) | `"MeshTemp1"` | The node's default advertised name. Can be changed after flashing without a reflash — see "Renaming your node" below. |
 | `TIME_AGREEMENT_WINDOW_SECS` | `meshtemp_config.h` | `600` (10 min) | See "Time sync" below. Max difference allowed between two independent time sources before they're trusted together on first sync. |
+| `MAX_TIME_SYNC_CANDIDATES` | `meshtemp_config.h` | `6` | See "Time sync" below. How many distinct sources are tracked at once while hunting for an agreeing pair on first sync. Not "how many are needed" (still 2) - bounds the pool so a single fast/wrong source can't monopolize the comparison against every other source that answers. |
 | `TIME_SANITY_MAX_JUMP_SECS` | `meshtemp_config.h` | `300` (5 min) | See "Time sync" below. Once synced, the largest single adjustment (either direction) accepted from any one source before it's rejected as implausible. |
+| `TIME_DISTRUST_THRESHOLD` | `meshtemp_config.h` | `3` | See "Time sync" below. Once synced, how many rejected proposals (with at least two distinct sources agreeing with each other) it takes before the node concludes its OWN clock is the outlier and re-seeds from that consensus. |
 
 ### Renaming your node
 
@@ -249,21 +251,34 @@ mechanism and a passive one feed into the same decision:
 
 * **Active:** at each cycle while unsynced, the node broadcasts one
   zero-hop node-discovery request asking for repeaters, then sends a
-  MeshCore "remote clock" request (`ANON_REQ_TYPE_BASIC`) to up to two of
-  the repeaters that answer.
+  MeshCore "remote clock" request (`ANON_REQ_TYPE_BASIC`) to each distinct
+  repeater that answers, up to `MAX_TIME_SYNC_CANDIDATES` at once.
 * **Passive:** any repeater's regular self-advert also carries a
   timestamp, for free, no request needed.
 
-Both feed the same pool of candidate sources. The decision:
+Both feed the same pool of candidate sources, accumulated across the whole
+boot session — the boot attempt *and* every retry cycle, never wiped by a
+mere disagreement. The decision:
 
-* **Two sources agree** (within `TIME_AGREEMENT_WINDOW_SECS`, default 600s,
-  of each other) — apply the **earlier** of the two, unrestricted direction
-  (nothing was trusted yet, so there's no "forward-only" to violate).
-* **Two sources disagree** beyond that window — trust neither. Both are
-  logged by name, discarded, and the node tries again next cycle.
-* **Only one source ever answers**, after the first cycle plus one full
-  retry cycle — accepted alone, logged as `single-source`, rather than
-  waiting indefinitely for a second source that may not exist.
+* **Any two candidates in the pool agree** (within
+  `TIME_AGREEMENT_WINDOW_SECS`, default 600s, of each other) — sync
+  immediately: apply the **earlier** of that pair, unrestricted direction
+  (nothing was trusted yet, so there's no "forward-only" to violate). Every
+  *other* candidate in the pool at that moment is logged and ignored as an
+  outlier — a lone bad source can never block consensus between two good
+  ones, no matter how many attempts it took for both of them to show up.
+* **A pair disagrees** beyond that window — neither is discarded (a third
+  source might still agree with one of them), but both are marked
+  distrusted for the rest of the boot session. This only affects the
+  single-source fallback below; either one can still sync normally by later
+  agreeing with some third source.
+* **Only one distinct source ever answers**, after the first cycle plus one
+  full retry cycle — accepted alone, logged as `single-source` — *unless*
+  that source has already lost a disagreement this session, in which case
+  it's explicitly withheld (logged as such) rather than trusted. A source
+  that's already been contradicted once doesn't get an unearned second
+  chance to seed the clock alone just because whoever it disagreed with
+  didn't answer this particular round.
 * **No source answers** — keep retrying every cycle, no limit. Sending
   never waits on this: unsynced readings go out with timestamp `0` (an
   unambiguous "unset" marker) rather than being held back or sent with a
@@ -278,21 +293,48 @@ clock; rejected and logged (naming the source) if the jump is bigger than
 that in either direction. Backward correction is fully supported — nothing
 in this project's own sync path is forward-only.
 
+**Self-distrust escalation (phase 2, mandatory).** The sanity window above
+protects against any one bad proposal, but not against the trusted clock
+itself being the wrong one (e.g. it seeded from a bad `single-source`
+answer before a corroborating source ever showed up) — every legitimate
+correction from the real world would otherwise keep getting rejected as
+"implausible" forever, with no way out. Every rejected proposal is recorded
+by distinct source identity (most recent value per source). Once at least
+`TIME_DISTRUST_THRESHOLD` (default 3) rejections have accumulated since the
+last sync/re-seed, *and* at least two distinct rejecting sources agree with
+each other (within `TIME_AGREEMENT_WINDOW_SECS`), the node concludes its
+own clock — not them — is the outlier: it drops the current time and
+re-seeds from that agreeing pair in one motion, fully logged
+(`SELF-DISTRUST ESCALATION`). It's never observably unsynced in between —
+the active discovery ladder does not resume. This deliberately requires
+both a minimum count (not trigger-happy on the first couple of stray
+rejections) and real corroboration (a single persistently-wrong source
+spamming rejections can't trigger it alone).
+
 Both request types the active mechanism uses are answered by repeater
 firmware without any password (confirmed by reading
 `examples/simple_repeater/MyMesh.cpp` — gated only by rate limiters). That's
 exactly why phase 1 never trusts a single answer alone: anyone can stand up
 a repeater and answer these.
 
-**Known limitation:** phase 1's two-source check only catches *disagreement*
-between sources, not a single repeater that's simply wrong. If only one
-repeater is ever reachable, its clock is trusted as-is (`single-source`
-fallback) — a lone misconfigured repeater can seed a wrong initial time this
-way, and it'll stick until either a second, disagreeing-enough source shows
-up to force a re-evaluation, or the node restarts and gets a fresh chance at
-two-source agreement. Phase 2's ±300s sanity window bounds *ongoing* damage
-from a bad source once synced, but does nothing to validate the *initial*
-value if only one source was ever available.
+**Known limitation:** the rejected-proposal count behind self-distrust
+escalation never decays — it's a pure accumulator since the last
+sync/re-seed, with no time window. A source that was wrong hours ago and a
+source that's wrong right now count the same toward the threshold. In
+practice this hasn't mattered (the threshold requires real corroboration
+between two distinct sources, not just volume), but it's worth knowing if
+escalation ever seems to fire on stale evidence.
+
+**Boot diagnostics:** every boot logs `[boot] reset reason: <reason>`,
+read from the nRF52840's `RESETREAS` register via the existing
+`NRF52Board`/power-management path (`checkBootVoltage()` →
+`initPowerMgr()`), surfaced late enough in `setup()` to survive the
+USB-CDC reconnect that follows any reset. Caveat: this silicon doesn't
+expose a distinct brownout bit in that register, so a brownout reset and a
+genuine cold power-on both read as `"Cold Boot"` — the log can tell you
+*that* something reset the board, and rule out some causes (watchdog, CPU
+lockup, debugger), but can't distinguish "power was actually removed" from
+"voltage sagged momentarily" on its own.
 
 `set name`-style admin commands (`clock sync`, `time <epoch>` — see
 "Renaming your node" above for how remote admin access works) are also not

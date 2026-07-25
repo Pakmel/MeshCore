@@ -21,29 +21,143 @@ static void logDateTime(uint32_t epoch_secs) {
 }
 
 int BootTimeSync::findOrAddCandidateSlot(const mesh::Identity& id) {
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < _num_candidates; i++) {
     if (_candidates[i].have_id && _candidates[i].id.matches(id)) return i;
   }
-  for (int i = 0; i < 2; i++) {
-    if (!_candidates[i].have_id) {
+  for (int i = 0; i < _num_candidates; i++) {
+    if (!_candidates[i].have_id) {   // a previously-freed slot (timed out with no reply)
+      _candidates[i] = Candidate();
       _candidates[i].have_id = true;
       _candidates[i].id = id;
+      _candidates[i].added_at = millis();
       return i;
     }
   }
-  return -1;   // both slots already claimed by other, distinct sources
+  if (_num_candidates < MAX_TIME_SYNC_CANDIDATES) {
+    int i = _num_candidates++;
+    _candidates[i] = Candidate();
+    _candidates[i].have_id = true;
+    _candidates[i].id = id;
+    _candidates[i].added_at = millis();
+    return i;
+  }
+
+  // Pool full - evict the oldest slot that does NOT have an active
+  // clock-request still in flight (evicting an in-flight one would silently
+  // orphan its reply when it eventually arrives - see onPeerResponse()).
+  // Only fall back to evicting an in-flight slot if literally every tracked
+  // candidate is in flight at once.
+  int oldest = -1;
+  for (int i = 0; i < _num_candidates; i++) {
+    bool in_flight = _candidates[i].requested && !_candidates[i].have_response;
+    if (in_flight) continue;
+    if (oldest < 0 || _candidates[i].added_at < _candidates[oldest].added_at) oldest = i;
+  }
+  if (oldest < 0) {
+    oldest = 0;
+    for (int i = 1; i < _num_candidates; i++) {
+      if (_candidates[i].added_at < _candidates[oldest].added_at) oldest = i;
+    }
+    Serial.print("[time sync] candidate pool full and all in flight - evicting oldest in-flight (");
+    Serial.print(_candidates[oldest].label);
+    Serial.println(")");
+  }
+  _candidates[oldest] = Candidate();
+  _candidates[oldest].have_id = true;
+  _candidates[oldest].id = id;
+  _candidates[oldest].added_at = millis();
+  return oldest;
 }
 
 int BootTimeSync::countValidCandidates() const {
   int n = 0;
-  if (_candidates[0].have_response) n++;
-  if (_candidates[1].have_response) n++;
+  for (int i = 0; i < _num_candidates; i++) {
+    if (_candidates[i].have_response) n++;
+  }
   return n;
 }
 
 void BootTimeSync::resetCandidates() {
-  _candidates[0] = Candidate();
-  _candidates[1] = Candidate();
+  for (int i = 0; i < _num_candidates; i++) {
+    _candidates[i] = Candidate();
+  }
+  _num_candidates = 0;
+}
+
+void BootTimeSync::checkSelfDistrustEscalation(SensorMesh& mesh, const mesh::Identity& source_id, uint32_t rejected_time, const char* source_label) {
+  _distrust_reject_count++;
+
+  int slot = -1;
+  for (int i = 0; i < _distrust_num; i++) {
+    if (_distrust_pool[i].have_id && _distrust_pool[i].id.matches(source_id)) { slot = i; break; }
+  }
+  if (slot < 0) {
+    if (_distrust_num < MAX_TIME_SYNC_CANDIDATES) {
+      slot = _distrust_num++;
+    } else {
+      slot = 0;
+      for (int i = 1; i < _distrust_num; i++) {
+        if (_distrust_pool[i].added_at < _distrust_pool[slot].added_at) slot = i;
+      }
+    }
+    _distrust_pool[slot] = Candidate();
+    _distrust_pool[slot].have_id = true;
+    _distrust_pool[slot].id = source_id;
+    _distrust_pool[slot].added_at = millis();
+  }
+  strncpy(_distrust_pool[slot].label, source_label, sizeof(_distrust_pool[slot].label) - 1);
+  _distrust_pool[slot].have_response = true;
+  _distrust_pool[slot].timestamp = rejected_time;
+
+  if (_distrust_reject_count < TIME_DISTRUST_THRESHOLD) return;
+
+  for (int i = 0; i < _distrust_num; i++) {
+    if (!_distrust_pool[i].have_response) continue;
+    for (int j = i + 1; j < _distrust_num; j++) {
+      if (!_distrust_pool[j].have_response) continue;
+
+      uint32_t a = _distrust_pool[i].timestamp, b = _distrust_pool[j].timestamp;
+      uint32_t diff = a > b ? a - b : b - a;
+      if (diff > TIME_AGREEMENT_WINDOW_SECS) continue;
+
+      bool i_earlier = a <= b;
+      uint32_t earlier = i_earlier ? a : b;
+      const char* earlier_label = i_earlier ? _distrust_pool[i].label : _distrust_pool[j].label;
+      uint32_t old_time = mesh.getRTCClock()->getCurrentTime();
+
+      Serial.print("[time sync] SELF-DISTRUST ESCALATION: ");
+      Serial.print(_distrust_reject_count);
+      Serial.print(" rejected proposals this session, and 2 distinct sources agree with each other (delta ");
+      Serial.print(diff);
+      Serial.print("s): ");
+      Serial.print(_distrust_pool[i].label);
+      Serial.print("=");
+      logDateTime(a);
+      Serial.print(", ");
+      Serial.print(_distrust_pool[j].label);
+      Serial.print("=");
+      logDateTime(b);
+      Serial.println();
+
+      Serial.print("[time sync] dropping our own clock (");
+      logDateTime(old_time);
+      Serial.print(") and re-seeding from that consensus (");
+      Serial.print(earlier_label);
+      Serial.print("): ");
+      logDateTime(earlier);
+      Serial.println();
+
+      // Applied directly, _synced never observably goes false - this is a
+      // re-seed, not a return to the unsynced state (retryIfNeeded()'s
+      // active discovery ladder must not resume).
+      mesh.getRTCClock()->setCurrentTime(earlier);
+
+      for (int k = 0; k < _distrust_num; k++) _distrust_pool[k] = Candidate();
+      _distrust_num = 0;
+      _distrust_reject_count = 0;
+      return;
+    }
+  }
 }
 
 void BootTimeSync::proposeTime(SensorMesh& mesh, const mesh::Identity& source_id, uint32_t new_time, const char* source_label) {
@@ -77,13 +191,16 @@ void BootTimeSync::proposeTime(SensorMesh& mesh, const mesh::Identity& source_id
       Serial.print("s > TIME_SANITY_MAX_JUMP_SECS=");
       Serial.print((uint32_t)TIME_SANITY_MAX_JUMP_SECS);
       Serial.println("s)");
+
+      checkSelfDistrustEscalation(mesh, source_id, new_time, source_label);
     }
     return;
   }
 
-  // PHASE 1: gather up to 2 independent candidates before trusting any one.
+  // PHASE 1: accumulate distinct candidates across the whole boot session
+  // and search for any agreeing pair - see BootTimeSync.h for the full
+  // design.
   int slot = findOrAddCandidateSlot(source_id);
-  if (slot < 0) return;   // already have 2 distinct sources this round, ignore further ones
 
   strncpy(_candidates[slot].label, source_label, sizeof(_candidates[slot].label) - 1);
   _candidates[slot].have_response = true;
@@ -95,20 +212,18 @@ void BootTimeSync::proposeTime(SensorMesh& mesh, const mesh::Identity& source_id
   logDateTime(new_time);
   Serial.println();
 
-  evaluateTwoIfReady(mesh);
-}
+  // Seek agreement between this candidate and every OTHER candidate already
+  // in the pool - not just "whoever's in the other slot".
+  for (int i = 0; i < _num_candidates; i++) {
+    if (i == slot || !_candidates[i].have_response) continue;
 
-void BootTimeSync::evaluateTwoIfReady(SensorMesh& mesh) {
-  if (countValidCandidates() < 2) return;
+    uint32_t a = _candidates[slot].timestamp, b = _candidates[i].timestamp;
+    uint32_t diff = a > b ? a - b : b - a;
+    if (diff > TIME_AGREEMENT_WINDOW_SECS) continue;
 
-  uint32_t t0 = _candidates[0].timestamp;
-  uint32_t t1 = _candidates[1].timestamp;
-  uint32_t diff = t0 > t1 ? t0 - t1 : t1 - t0;
-
-  if (diff <= TIME_AGREEMENT_WINDOW_SECS) {
-    bool zero_earlier = t0 <= t1;
-    uint32_t earlier = zero_earlier ? t0 : t1;
-    const char* earlier_label = zero_earlier ? _candidates[0].label : _candidates[1].label;
+    bool slot_earlier = a <= b;
+    uint32_t earlier = slot_earlier ? a : b;
+    const char* earlier_label = slot_earlier ? _candidates[slot].label : _candidates[i].label;
 
     mesh.getRTCClock()->setCurrentTime(earlier);
     _synced = true;
@@ -116,34 +231,57 @@ void BootTimeSync::evaluateTwoIfReady(SensorMesh& mesh) {
     Serial.print("[time sync] synced (2-source agreement, delta ");
     Serial.print(diff);
     Serial.print("s): ");
-    Serial.print(_candidates[0].label);
+    Serial.print(_candidates[i].label);
     Serial.print("=");
-    logDateTime(t0);
+    logDateTime(b);
     Serial.print(", ");
-    Serial.print(_candidates[1].label);
+    Serial.print(_candidates[slot].label);
     Serial.print("=");
-    logDateTime(t1);
+    logDateTime(a);
     Serial.print(" - applying earlier (");
     Serial.print(earlier_label);
     Serial.println(")");
-  } else {
+
+    for (int j = 0; j < _num_candidates; j++) {
+      if (j == slot || j == i || !_candidates[j].have_response) continue;
+      Serial.print("[time sync] outlier ignored: ");
+      Serial.print(_candidates[j].label);
+      Serial.print(" reported ");
+      logDateTime(_candidates[j].timestamp);
+      Serial.println();
+    }
+
+    resetCandidates();
+    _state = State::IDLE;
+    return;
+  }
+
+  // No agreeing pair found - nothing gets discarded (a third source might
+  // still agree with one of these), but every candidate that disagreed with
+  // this new arrival is marked distrusted for the rest of the session, so
+  // the single-source fallback can never blindly trust it alone later.
+  for (int i = 0; i < _num_candidates; i++) {
+    if (i == slot || !_candidates[i].have_response) continue;
+
+    _candidates[slot].distrusted = true;
+    _candidates[i].distrusted = true;
+
+    uint32_t a = _candidates[slot].timestamp, b = _candidates[i].timestamp;
+    uint32_t diff = a > b ? a - b : b - a;
     Serial.print("[time sync] sources disagree (delta ");
     Serial.print(diff);
     Serial.print("s > TIME_AGREEMENT_WINDOW_SECS=");
     Serial.print((uint32_t)TIME_AGREEMENT_WINDOW_SECS);
     Serial.print("s): ");
-    Serial.print(_candidates[0].label);
+    Serial.print(_candidates[i].label);
     Serial.print("=");
-    logDateTime(t0);
+    logDateTime(b);
     Serial.print(", ");
-    Serial.print(_candidates[1].label);
+    Serial.print(_candidates[slot].label);
     Serial.print("=");
-    logDateTime(t1);
-    Serial.println(" - trusting neither, retrying");
+    logDateTime(a);
+    Serial.println(" - both now distrusted for single-source fallback, still watching for a 3rd");
   }
-
-  resetCandidates();
-  _state = State::IDLE;
 }
 
 void BootTimeSync::retryIfNeeded(SensorMesh& mesh) {
@@ -190,9 +328,22 @@ void BootTimeSync::onControlData(SensorMesh& mesh, const mesh::Packet* pkt) {
   mesh::Identity id(&pkt->payload[6]);
   if (id.matches(mesh.self_id)) return;   // ignore our own reflected packet, if any
 
-  int slot = findOrAddCandidateSlot(id);
-  if (slot < 0) return;   // already have 2 distinct candidates this attempt
+#ifdef MESHTEMP_TIMESYNC_DEBUG
+  // TEMPORARY DIAGNOSTIC - not committed. Logs EVERY valid discover-resp
+  // this attempt, not just the ones we act on, so a cold start shows the
+  // true candidate pool size - independent of whether we already asked
+  // this one.
+  {
+    char dbg_hex[9];
+    mesh::Utils::toHex(dbg_hex, id.pub_key, 4);
+    Serial.print("[ts debug] discover-resp seen: ");
+    Serial.print(dbg_hex);
+    Serial.print(" our_snr=");
+    Serial.println(pkt->getSNR());
+  }
+#endif
 
+  int slot = findOrAddCandidateSlot(id);
   if (_candidates[slot].requested || _candidates[slot].have_response) return;   // already asked, or already answered (e.g. via a passive advert)
 
   char hex[9];
@@ -205,15 +356,6 @@ void BootTimeSync::onControlData(SensorMesh& mesh, const mesh::Packet* pkt) {
   Serial.println("), requesting its clock");
 
   sendClockRequestForSlot(mesh, slot);
-
-  if (_candidates[0].have_id && _candidates[1].have_id) {
-    // Both slots claimed (whether via a request just sent, or a passive
-    // advert that already answered one of them) - stop listening for more
-    // discovery responses this attempt and give outstanding requests their
-    // own window.
-    _state = State::WAITING_FOR_CLOCK;
-    _deadline = millis() + BOOT_SYNC_CLOCK_TIMEOUT_MS;
-  }
 }
 
 void BootTimeSync::sendClockRequestForSlot(SensorMesh& mesh, int slot) {
@@ -245,21 +387,58 @@ void BootTimeSync::sendClockRequestForSlot(SensorMesh& mesh, int slot) {
 }
 
 void BootTimeSync::onPeerResponse(SensorMesh& mesh, const ClientInfo* from, const uint8_t* data, size_t len) {
-  if (len < 8) return;
+#ifdef MESHTEMP_TIMESYNC_DEBUG
+  // TEMPORARY DIAGNOSTIC - not committed. Reaching this function at all
+  // already proves the reply passed the core dispatch's dest_hash match +
+  // searchPeersByHash() + MACThenDecrypt() (src/Mesh.cpp:126-176) - so if
+  // this never prints for a given repeater, the reply either never arrived
+  // over the air, or failed ACL/decrypt before reaching us at all. Combined
+  // with the "[ts debug] raw PAYLOAD_TYPE_RESPONSE seen" line in logRx()
+  // below (fires BEFORE ACL/decrypt), the two together localize which side
+  // of that boundary a given failure is on.
+  {
+    char from_hex[65];
+    mesh::Utils::toHex(from_hex, from->id.pub_key, PUB_KEY_SIZE);
+    Serial.print("[ts debug] onPeerResponse entered: from=");
+    Serial.print(from_hex);
+    Serial.print(" len=");
+    Serial.println((unsigned)len);
+  }
+#endif
+  if (len < 8) {
+#ifdef MESHTEMP_TIMESYNC_DEBUG
+    Serial.print("[ts debug] onPeerResponse: rejected, len too short: ");
+    Serial.println((unsigned)len);
+#endif
+    return;
+  }
 
   int slot = -1;
-  for (int i = 0; i < 2; i++) {
+  for (int i = 0; i < _num_candidates; i++) {
     if (_candidates[i].have_id && _candidates[i].requested && !_candidates[i].have_response
         && _candidates[i].id.matches(from->id)) {
       slot = i;
       break;
     }
   }
-  if (slot < 0) return;
+  if (slot < 0) {
+#ifdef MESHTEMP_TIMESYNC_DEBUG
+    Serial.println("[ts debug] onPeerResponse: rejected, no matching requested/unanswered candidate slot for this sender");
+#endif
+    return;
+  }
 
   uint32_t tag;
   memcpy(&tag, data, 4);
-  if (tag != _candidates[slot].clock_req_tag) return;
+  if (tag != _candidates[slot].clock_req_tag) {
+#ifdef MESHTEMP_TIMESYNC_DEBUG
+    Serial.print("[ts debug] onPeerResponse: rejected, tag mismatch: got ");
+    Serial.print(tag);
+    Serial.print(" expected ");
+    Serial.println(_candidates[slot].clock_req_tag);
+#endif
+    return;
+  }
 
   uint32_t repeater_now;
   memcpy(&repeater_now, &data[4], 4);
@@ -274,37 +453,44 @@ void BootTimeSync::finishAttempt(SensorMesh& mesh) {
   _sync_attempts++;
   int valid = countValidCandidates();
 
-  if (valid >= 2) {
-    // Shouldn't normally reach here - evaluateTwoIfReady() already fires as
-    // soon as the 2nd response lands - but cover it defensively.
-    evaluateTwoIfReady(mesh);
-    _state = State::IDLE;
-    return;
-  }
-
-  if (valid == 1) {
-    int i = _candidates[0].have_response ? 0 : 1;
+  if (valid == 0) {
+    Serial.println("[time sync] no repeater responded this attempt - will retry next cycle");
+  } else if (valid == 1) {
+    int i = -1;
+    for (int k = 0; k < _num_candidates; k++) {
+      if (_candidates[k].have_response) { i = k; break; }
+    }
     if (_sync_attempts >= 2) {
-      mesh.getRTCClock()->setCurrentTime(_candidates[i].timestamp);
-      _synced = true;
-      Serial.print("[time sync] single-source (no second source after ");
-      Serial.print(_sync_attempts);
-      Serial.print(" attempts) - accepting ");
-      Serial.print(_candidates[i].label);
-      Serial.print(": ");
-      logDateTime(_candidates[i].timestamp);
-      Serial.println();
-      resetCandidates();
+      if (!_candidates[i].distrusted) {
+        mesh.getRTCClock()->setCurrentTime(_candidates[i].timestamp);
+        _synced = true;
+        Serial.print("[time sync] single-source (no second source after ");
+        Serial.print(_sync_attempts);
+        Serial.print(" attempts) - accepting ");
+        Serial.print(_candidates[i].label);
+        Serial.print(": ");
+        logDateTime(_candidates[i].timestamp);
+        Serial.println();
+        resetCandidates();
+      } else {
+        Serial.print("[time sync] single-source fallback withheld: ");
+        Serial.print(_candidates[i].label);
+        Serial.println(" already lost a disagreement with another source this session - waiting for corroboration, will retry next cycle");
+      }
     } else {
       Serial.print("[time sync] have 1 source so far (");
       Serial.print(_candidates[i].label);
       Serial.println(") - waiting for a second, will retry next cycle");
-      // keep this candidate; the other (empty) slot stays open for a
-      // future attempt to find a second, different source.
+      // keep this candidate; more slots stay open for a future attempt to
+      // find a second, different source.
     }
   } else {
-    Serial.println("[time sync] no repeater responded this attempt - will retry next cycle");
-    resetCandidates();
+    // valid >= 2 with no sync means no pair has agreed yet - proposeTime()
+    // already fires the moment any pair does agree, so reaching here just
+    // means: keep the whole pool, keep listening.
+    Serial.print("[time sync] no agreeing pair yet among ");
+    Serial.print(valid);
+    Serial.println(" candidate(s) - still watching");
   }
 
   _state = State::IDLE;
@@ -315,8 +501,11 @@ void BootTimeSync::tick(SensorMesh& mesh) {
 
   if (_state == State::WAITING_FOR_DISCOVERY) {
     if ((long)(millis() - _deadline) >= 0) {
-      bool any_requested = _candidates[0].requested || _candidates[1].requested;
-      if (any_requested) {
+      bool any_outstanding = false;
+      for (int i = 0; i < _num_candidates; i++) {
+        if (_candidates[i].requested && !_candidates[i].have_response) { any_outstanding = true; break; }
+      }
+      if (any_outstanding) {
         _state = State::WAITING_FOR_CLOCK;
         _deadline = millis() + BOOT_SYNC_CLOCK_TIMEOUT_MS;
       } else {
@@ -325,7 +514,7 @@ void BootTimeSync::tick(SensorMesh& mesh) {
     }
   } else if (_state == State::WAITING_FOR_CLOCK) {
     if ((long)(millis() - _deadline) >= 0) {
-      for (int i = 0; i < 2; i++) {
+      for (int i = 0; i < _num_candidates; i++) {
         if (_candidates[i].have_id && _candidates[i].requested && !_candidates[i].have_response) {
           Serial.print("[time sync] no clock reply from ");
           Serial.println(_candidates[i].label);

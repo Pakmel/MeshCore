@@ -15,7 +15,7 @@ void RegionScope::begin() {
   // Mirrors RegionMap::getTransportKeysFor()'s "implicit auto hashtag
   // region" path (src/helpers/RegionMap.cpp): the key material is SHA256 of
   // the region name with a '#' prepended - the same convention a repeater
-  // operator gets from `region put se17` (with or without a leading '#' in
+  // operator gets from `region put se1780` (with or without a leading '#' in
   // the name, both resolve to this same key), so nothing extra needs
   // configuring on the repeater's TransportKeyStore side beyond the region
   // entry itself.

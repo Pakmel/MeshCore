@@ -81,6 +81,24 @@ protected:
       pkt->calculatePacketHash(hash);
       echo_retry.onPacketSeen(hash);
     }
+#ifdef MESHTEMP_TIMESYNC_DEBUG
+    // TEMPORARY DIAGNOSTIC - not committed. Fires for every raw incoming
+    // packet, before dedup/ACL/decrypt - independent of echo_retry above.
+    // Answers: does a PAYLOAD_TYPE_RESPONSE-shaped packet arrive at all,
+    // regardless of whether our ACL/decrypt matching later accepts it -
+    // compare against "[ts debug] onPeerResponse entered" in
+    // BootTimeSync.cpp to localize a failure to before/after that boundary.
+    if (pkt->getPayloadType() == PAYLOAD_TYPE_RESPONSE && pkt->payload_len >= 2) {
+      Serial.print("[ts debug] raw PAYLOAD_TYPE_RESPONSE seen: dest_hash=");
+      Serial.print(pkt->payload[0], HEX);
+      Serial.print(" src_hash=");
+      Serial.print(pkt->payload[1], HEX);
+      Serial.print(" payload_len=");
+      Serial.print(pkt->payload_len);
+      Serial.print(" route=");
+      Serial.println(pkt->isRouteDirect() ? "direct" : (pkt->isRouteFlood() ? "flood" : "?"));
+    }
+#endif
   }
 
   // Passive time sync (bonus layer, independent of BootTimeSync's active
@@ -421,6 +439,18 @@ void setup() {
 #endif
 
 #ifdef MESHTEMP_DS18B20
+  // Printed here, not right after board.begin(), because the earlier spot
+  // is lost: a reset drops the nRF52's USB CDC connection, the host has to
+  // re-enumerate the COM port, and a flat delay(1000) after Serial.begin()
+  // is not a wait-for-reconnect - "MeshTemp version:"/"Sensor ID:" (both
+  // printed earlier, unconditionally) are lost to the same race. This point
+  // is confirmed to survive it. getResetReason() itself was captured by
+  // NRF52Board::initPowerMgr() (via checkBootVoltage() in board.begin())
+  // and is retained in RAM for this whole boot even though the hardware
+  // RESETREAS register itself is cleared right after that capture.
+  Serial.print("[boot] reset reason: ");
+  Serial.println(board.getResetReasonString(board.getResetReason()));
+
   WaterChannel::selfCheckKeyDerivation();
   water_channel.begin();
 

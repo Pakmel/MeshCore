@@ -30,7 +30,7 @@
 // instead of forwarding it. Empty string means unscoped: no transport code
 // is attached, matching the plain flood/zero-hop route used before this
 // feature existed.
-#define MESHTEMP_REGION "se17"
+#define MESHTEMP_REGION "se1780"
 
 // Time sync tuning (see examples/meshtemp/BootTimeSync.h for the full design
 // and examples/meshtemp/README.md's "Time sync" section).
@@ -43,6 +43,15 @@
 // corroborating it - see BootTimeSync's single-source fallback.
 #define TIME_AGREEMENT_WINDOW_SECS 600
 
+// First sync only: how many distinct sources (by identity) BootTimeSync
+// tracks at once while hunting for an agreeing pair. Not a "how many do we
+// need" number - 2 is still the minimum for agreement, this just bounds how
+// many concurrently-heard candidates get remembered so a single fast/wrong
+// repeater can't monopolize the only comparison slot against every other
+// source that answers. Once full, the oldest candidate is evicted to make
+// room for a new distinct source.
+#define MAX_TIME_SYNC_CANDIDATES 6
+
 // Once synced: the clock is trusted, but not blindly - a proposed
 // adjustment (forward OR backward) is only applied if it's within this many
 // seconds of the current clock. A single misbehaving/wrong-clocked repeater
@@ -50,3 +59,19 @@
 // bad reading; this bounds the damage from any one source to a plausible
 // drift-correction-sized nudge.
 #define TIME_SANITY_MAX_JUMP_SECS 300
+
+// Once synced: self-distrust escalation. TIME_SANITY_MAX_JUMP_SECS above
+// protects against any one bad proposal, but if the node's OWN clock is the
+// one that's actually wrong (e.g. it seeded from a bad single-source
+// fallback before this repeater ever corrected itself), every legitimate
+// correction from the real world keeps getting rejected as "implausible"
+// forever - there's no other way out. Once this many rejected proposals
+// have accumulated since the last successful sync/re-seed, AND at least two
+// of the (distinct, by identity) rejecting sources agree with each other
+// within TIME_AGREEMENT_WINDOW_SECS, the node concludes its own clock - not
+// them - is the outlier: it drops the current time and re-seeds from that
+// agreeing pair in one motion, fully logged. Deliberately requires BOTH a
+// minimum count (not trigger-happy on the first couple of stray rejections)
+// AND real corroboration (not just volume from one persistently-wrong
+// source) - see BootTimeSync's escalation logic.
+#define TIME_DISTRUST_THRESHOLD 3
