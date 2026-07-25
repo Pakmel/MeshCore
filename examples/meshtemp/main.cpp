@@ -439,18 +439,6 @@ void setup() {
 #endif
 
 #ifdef MESHTEMP_DS18B20
-  // Printed here, not right after board.begin(), because the earlier spot
-  // is lost: a reset drops the nRF52's USB CDC connection, the host has to
-  // re-enumerate the COM port, and a flat delay(1000) after Serial.begin()
-  // is not a wait-for-reconnect - "MeshTemp version:"/"Sensor ID:" (both
-  // printed earlier, unconditionally) are lost to the same race. This point
-  // is confirmed to survive it. getResetReason() itself was captured by
-  // NRF52Board::initPowerMgr() (via checkBootVoltage() in board.begin())
-  // and is retained in RAM for this whole boot even though the hardware
-  // RESETREAS register itself is cleared right after that capture.
-  Serial.print("[boot] reset reason: ");
-  Serial.println(board.getResetReasonString(board.getResetReason()));
-
   WaterChannel::selfCheckKeyDerivation();
   water_channel.begin();
 
@@ -459,6 +447,22 @@ void setup() {
   } else {
     Serial.println("DS18B20 NOT detected on WB_IO1 - check wiring");
   }
+
+  // Printed here, not right after board.begin(), because the earlier spot
+  // is lost: a reset drops the nRF52's USB CDC connection, the host has to
+  // re-enumerate the COM port, and a flat delay(1000) after Serial.begin()
+  // is not a wait-for-reconnect - "MeshTemp version:"/"Sensor ID:" (both
+  // printed earlier, unconditionally) are lost to the same race. Placed
+  // after BOTH the self-check and DS18B20 lines above (not right before
+  // just one of them) - a single reconnect-boundary print can still land in
+  // a partially-filled USB CDC ring buffer and get dropped even when a
+  // neighboring line survives, so this needs real margin past the
+  // boundary, not just proximity to one confirmed-reliable line. getResetReason()
+  // itself was captured by NRF52Board::initPowerMgr() (via checkBootVoltage()
+  // in board.begin()) and is retained in RAM for this whole boot even though
+  // the hardware RESETREAS register itself is cleared right after that capture.
+  Serial.print("[boot] reset reason: ");
+  Serial.println(board.getResetReasonString(board.getResetReason()));
 
 #ifndef MESHTEMP_SLEEP_CYCLE
   next_test_read_due = millis();
