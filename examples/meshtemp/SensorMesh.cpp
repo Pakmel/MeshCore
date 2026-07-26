@@ -1,5 +1,6 @@
 #include "SensorMesh.h"
 #include "RegionScope.h"
+#include "meshtemp_config.h"   // MESHTEMP_RX_BOOSTED_GAIN
 
 /* ------------------------------ Config -------------------------------- */
 
@@ -736,6 +737,11 @@ SensorMesh::SensorMesh(mesh::MainBoard& board, mesh::Radio& radio, mesh::Millise
   _prefs.bw = LORA_BW;
   _prefs.cr = LORA_CR;
   _prefs.tx_power_dbm = LORA_TX_POWER;
+  // Not part of the air preset, but a radio default worth setting explicitly:
+  // the stock value is off (this struct is memset to zero above), which loses
+  // receive sensitivity for a saving this node does not need. See
+  // MESHTEMP_RX_BOOSTED_GAIN in meshtemp_config.h.
+  _prefs.rx_boosted_gain = MESHTEMP_RX_BOOSTED_GAIN;
   _prefs.advert_interval = 1;  // default to 2 minutes for NEW installs
   _prefs.flood_advert_interval = 0;   // disabled
   _prefs.disable_fwd = true;

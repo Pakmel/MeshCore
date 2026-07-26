@@ -22,6 +22,23 @@
 #define PLAUSIBLE_MIN_C (-5.0f)
 #define PLAUSIBLE_MAX_C (45.0f)
 
+// Boosted RX gain on the SX1262. The stock default is off, which costs real
+// receive sensitivity - and sensitivity is worth more to this node than the
+// small extra current, because the production build keeps the radio powered
+// down between hourly cycles, so the receiver is only drawing anything at all
+// for a few seconds an hour. A node at the edge of a repeater's range gains
+// more from hearing that repeater than it loses from the current.
+//
+// This is a first-boot default, written into the persisted prefs on a fresh
+// filesystem. It does NOT override a value already stored on the node: after
+// changing it, either erase the filesystem or set it over the CLI with
+// `set radio.rxgain on`.
+//
+// The four air parameters (frequency, bandwidth, SF, CR) are NOT here - they
+// are build flags in platformio.ini's [arduino_base], where the EU/UK Narrow
+// preset is defined and documented as a set.
+#define MESHTEMP_RX_BOOSTED_GAIN 1
+
 // Transport-code region scope, applied to every outgoing channel message and
 // to the first boot advert (see examples/meshtemp/RegionScope.h and
 // examples/meshtemp/README.md "Region scoping"). Repeaters that gate flood
