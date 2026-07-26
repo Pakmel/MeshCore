@@ -5,6 +5,10 @@
 .vscode/launch.json
 .vscode/ipch
 out/
+# Verified flashable artifacts (see the dev notes "Build proof"). Kept on disk
+# as the single trusted source to flash from, but not committed - they are ~1 MB
+# binaries reproducible from the tagged source.
+builds/
 .direnv/
 .DS_Store
 .vscode/settings.json
