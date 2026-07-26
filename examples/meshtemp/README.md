@@ -18,9 +18,8 @@ upstream MeshCore merges stay clean.
 * Solder, or a small length of wire and a way to join it (screw terminal,
   crimp connector, etc.) — see "Hardware" below, either works
 * USB cable (data-capable, not charge-only) for flashing and for the bench build
-* A LiPo/Li-ion battery for running untethered — the target is an average
-  current draw under 0.5 mA on the production build — or USB power for bench
-  testing
+* A LiPo/Li-ion battery for running untethered on the production build, or USB
+  power for bench testing
 
 ## Hardware
 
@@ -71,10 +70,9 @@ Two PlatformIO environments, both defined in `variants/rak4631/platformio.ini`:
   hour, USB serial stays up, no deep sleep. Use this for wiring checks, message
   verification, and retry testing.
 * **`RAK_4631_meshtemp_sleep`** — production build. Identical read/send/retry code,
-  but sends once per hour and puts the radio to sleep between cycles for
-  sub-0.5 mA average current. Flash this one, then run on battery only — USB keeps
-  the nRF52 from reaching its lowest sleep current and will skew any power
-  measurement.
+  but sends once per hour and powers the radio down between cycles to keep average
+  current low. Flash this one, then run on battery only — USB keeps the nRF52 from
+  reaching its lowest sleep current and will skew any power measurement you take.
 
 There's also a third, temporary debug environment — see "Troubleshooting" below.
 
