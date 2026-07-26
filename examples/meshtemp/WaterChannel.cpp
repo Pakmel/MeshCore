@@ -38,15 +38,20 @@ bool WaterChannel::selfCheckKeyDerivation() {
 
 void WaterChannel::formatMessage(char* out, size_t out_size, const WaterReading& reading, float batt_v) {
   switch (reading.case_type) {
+    // The leading word before the first ": " is what MeshCore clients display
+    // as the sender name for a channel message (see docs/payloads.md - channel
+    // messages carry no identity of their own, so the convention is
+    // "<sender name>: <message body>"). It is therefore a user-visible label,
+    // not decoration: this node shows up as "Temperature" in the app.
     case WaterReadingCase::NORMAL:
-      snprintf(out, out_size, "Water: %.1fC Batt: %.2fV", reading.temp_c, batt_v);
+      snprintf(out, out_size, "Temperature: %.1fC Batt: %.2fV", reading.temp_c, batt_v);
       break;
     case WaterReadingCase::IMPLAUSIBLE:
-      snprintf(out, out_size, "Water: %.1fC? Batt: %.2fV", reading.temp_c, batt_v);
+      snprintf(out, out_size, "Temperature: %.1fC? Batt: %.2fV", reading.temp_c, batt_v);
       break;
     case WaterReadingCase::SENSOR_ERROR:
     default:
-      snprintf(out, out_size, "Water: ERR(%d) Batt: %.2fV", reading.error_code, batt_v);
+      snprintf(out, out_size, "Temperature: ERR(%d) Batt: %.2fV", reading.error_code, batt_v);
       break;
   }
 }

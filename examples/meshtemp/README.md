@@ -215,7 +215,7 @@ Battery voltage is always included. There are exactly three cases:
 
 **Case 1 — normal reading:**
 ```
-Water: 18.5C Batt: 3.91V
+Temperature: 18.5C Batt: 3.91V
 ```
 Temperature to one decimal, voltage to two decimals.
 
@@ -223,13 +223,13 @@ Temperature to one decimal, voltage to two decimals.
 -5.0 to 45.0°C by default). The value is still sent — it's a real sensor reading, not
 an error — but flagged with a `?` directly after the `C`:
 ```
-Water: 52.3C? Batt: 3.91V
+Temperature: 52.3C? Batt: 3.91V
 ```
 
 **Case 3 — sensor error.** No temperature figure is ever sent, only the raw error
 code in parentheses after `ERR`, so it can never be mistaken for a measurement:
 ```
-Water: ERR(-127) Batt: 3.91V
+Temperature: ERR(-127) Batt: 3.91V
 ```
 `-127` — probe not responding (check wiring/pullup). `85` — power-on default value,
 read too early (timing bug, should not occur in normal operation).
@@ -350,7 +350,7 @@ sources.
 
 ## Troubleshooting
 
-**`Water: ERR(-127) Batt: ...`** — the probe isn't responding at all (wiring,
+**`Temperature: ERR(-127) Batt: ...`** — the probe isn't responding at all (wiring,
 pullup, or continuity fault). Before assuming firmware, check the physical
 connection first:
 
@@ -367,7 +367,7 @@ connection first:
   its own datasheet rather than assuming red/black/yellow.
 * If all of that checks out, try a second probe to rule out a dead sensor.
 
-**`Water: ERR(85) Batt: ...`** — the power-on-reset default scratchpad value
+**`Temperature: ERR(85) Batt: ...`** — the power-on-reset default scratchpad value
 was read before a real conversion completed (a timing bug). This shouldn't
 happen in normal operation, since the firmware always waits for
 `conversionDone()` before reading — if you see this repeatedly, it points at
