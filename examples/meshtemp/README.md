@@ -90,21 +90,26 @@ pio run -e RAK_4631_meshtemp
 pio run -e RAK_4631_meshtemp_sleep
 ```
 
-`pio run` alone does **not** produce a `.uf2` file — that needs the `create_uf2`
-target explicitly:
+The result is `.pio/build/<env>/firmware.uf2`. The `.uf2` is the only file the
+bootloader accepts, and it's produced automatically by every build — if the
+conversion fails, the build fails with it, so a successful build always leaves a
+flashable file behind.
 
-```
-pio run -e RAK_4631_meshtemp_sleep -t create_uf2
-```
-
-The result is `.pio/build/<env>/firmware.uf2`.
+As of 0.7.0 this happens on a plain `pio run`. Older versions required a separate
+`-t create_uf2` step, and running `pio run` without it finished successfully while
+producing no `.uf2` at all — worth knowing if you're building from a 0.6.0 or
+earlier checkout, where a "successful" build can leave you with nothing to flash
+and an older file still on the board.
 
 ### Option B: no build, use the release UF2
 
 Every tagged release on the
 [Releases page](https://github.com/Pakmel/MeshCore/releases) ships pre-built `.uf2` files for both
-environments (`meshtemp_bench_<version>.uf2` and `meshtemp_sleep_<version>.uf2`)
-— download the one you want and skip straight to flashing. This is the
+environments (`meshtemp_bench_<version>-<commit>.uf2` and
+`meshtemp_sleep_<version>-<commit>.uf2`) — download the one you want and skip
+straight to flashing. The short commit hash in the filename is deliberate: it
+tells you exactly which build you have, so an older download sitting in your
+Downloads folder can't be mistaken for the current one. This is the
 easiest route if you just want to run the node as-is; use Option A if you're
 changing `meshtemp_config.h` (see "Make it your own" below), since that always
 needs a rebuild.
