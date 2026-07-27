@@ -134,6 +134,8 @@ is no remote configuration of these, any change needs a USB reflash:
 | `ADVERT_NAME` | `variants/rak4631/platformio.ini` (a build flag, **not** in `meshtemp_config.h` — there's no separate default-name macro) | `"MeshTemp1"` | The node's default advertised name. Can be changed after flashing without a reflash — see "Renaming your node" below. |
 | `MESHTEMP_RX_BOOSTED_GAIN` | `meshtemp_config.h` | `1` (on) | Boosted receive gain on the SX1262. The stock MeshCore default is off; this build turns it on, trading a little current for receive sensitivity — a worthwhile trade here because the production build powers the radio down between hourly cycles, so the receiver is only active for a few seconds an hour. Set to `0` for the stock behaviour. **First-boot default only:** it's written to the persisted settings on a fresh filesystem and won't override a value already stored — after changing it, either erase the filesystem or use `set radio.rxgain on`/`off`. |
 | Radio preset (frequency, bandwidth, SF, CR) | `platformio.ini`, `[arduino_base]` build flags — **not** in `meshtemp_config.h` | `869.618` MHz, `62.5` kHz, SF `8`, CR `8` | The EU/UK Narrow air configuration, matching the KSD network in Karlstad. These four belong together — changing one without the others puts the node on a different air configuration than its neighbours. Note that a wrong CR is invisible in practice: LoRa's explicit header carries it, so a receiver auto-detects it and a mismatched node still communicates, differing only in airtime and error resilience. |
+| `MESHTEMP_SYNC_AWAKE_MAX_SECS` | `meshtemp_config.h` | `3600` (1 hour) | See "Time sync" below. How long a freshly-booted node stays awake hunting for a clock before giving up, sending with timestamp `0`, and entering normal cycling. Bounds the one-off power cost on a mesh with no reachable repeater. |
+| `MESHTEMP_SYNC_RETRY_SECS` | `meshtemp_config.h` | `150` (2.5 min) | See "Time sync" below. Retry cadence during the boot phase. Kept above the repeater anon rate limit's window (four per 180s, per repeater) with margin. |
 | `TIME_AGREEMENT_WINDOW_SECS` | `meshtemp_config.h` | `600` (10 min) | See "Time sync" below. Max difference allowed between two independent time sources before they're trusted together on first sync. |
 | `MAX_TIME_SYNC_CANDIDATES` | `meshtemp_config.h` | `6` | See "Time sync" below. How many distinct sources are tracked at once while hunting for an agreeing pair on first sync. Not "how many are needed" (still 2) - bounds the pool so a single fast/wrong source can't monopolize the comparison against every other source that answers. |
 | `TIME_SANITY_MAX_JUMP_SECS` | `meshtemp_config.h` | `300` (5 min) | See "Time sync" below. Once synced, the largest single adjustment (either direction) accepted from any one source before it's rejected as implausible. |
@@ -284,10 +286,34 @@ mere disagreement. The decision:
   that's already been contradicted once doesn't get an unearned second
   chance to seed the clock alone just because whoever it disagreed with
   didn't answer this particular round.
-* **No source answers** — keep retrying every cycle, no limit. Sending
-  never waits on this: unsynced readings go out with timestamp `0` (an
-  unambiguous "unset" marker) rather than being held back or sent with a
-  plausible-looking wrong date.
+* **No source answers** — keep retrying, no limit. See the boot phase below
+  for what happens meanwhile.
+
+**Boot phase (0.9.0 and later).** After a cold boot the node stays awake
+continuously and sends nothing until the clock is trusted, retrying every
+`MESHTEMP_SYNC_RETRY_SECS` (default 150s). The moment the first sync
+succeeds it takes a reading immediately — carrying a real timestamp — and
+drops into normal cycling permanently. On a mesh with reachable repeaters
+the first message therefore arrives within minutes, correctly stamped.
+
+If nothing usable is heard within `MESHTEMP_SYNC_AWAKE_MAX_SECS` (default
+3600s, one hour) the node says so plainly in the log, sends the reading with
+timestamp `0` (an unambiguous "unset" marker, never a plausible-looking wrong
+date) and enters normal cycling anyway. It is never permanently silent, and
+the per-cycle retry plus the passive advert path keep working from there.
+
+Retries rotate between known repeaters rather than hammering one, and
+discovery is only re-broadcast while no repeater has been heard at all —
+both to stay clear of the repeater anon rate limit (four per 180s, per
+repeater) now that retries come every 150s instead of once an hour.
+
+Why the phase exists: the production build powers the radio down as soon as
+a send cycle resolves, about two seconds on a healthy mesh. That left the
+active ladder roughly two seconds per hour to broadcast discovery, hear a
+reply, request a clock and receive it — steps measured at 2-4 seconds each.
+Before 0.9.0 a sleeping node could not sync in the field at all, and sent
+every reading with timestamp `0` indefinitely. The bench build never showed
+it, because the bench build never sleeps.
 
 **Phase 2 — already synced.** Every subsequently proposed time (from a
 repeater's advert, most commonly — the active mechanism stops once synced,

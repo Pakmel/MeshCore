@@ -309,6 +309,46 @@ void BootTimeSync::retryIfNeeded(SensorMesh& mesh) {
   }
 }
 
+bool BootTimeSync::anyRepeaterHeard() const {
+  for (int i = 0; i < _num_candidates; i++) {
+    if (_candidates[i].have_id) return true;
+  }
+  return false;
+}
+
+void BootTimeSync::bootPhaseRetry(SensorMesh& mesh) {
+  if (_synced) return;
+  if (_state != State::IDLE) return;   // previous attempt still in flight - let it resolve first
+
+  // Nothing heard yet: broadcast discovery, same as the per-cycle path.
+  if (!anyRepeaterHeard()) {
+    retryIfNeeded(mesh);
+    return;
+  }
+
+  // At least one repeater is known. Re-broadcasting discovery would only add
+  // airtime, so re-request a clock from one known repeater instead, rotating
+  // so we never lean on a single repeater's rate limiter. Two passes: prefer
+  // a slot still waiting on its first reply, then fall back to any known slot
+  // (a fresher timestamp from an already-answered source can still complete a
+  // pair with someone else).
+  for (int pass = 0; pass < 2; pass++) {
+    for (int k = 0; k < _num_candidates; k++) {
+      int i = (_rotate_idx + k) % _num_candidates;
+      if (!_candidates[i].have_id) continue;
+      if (pass == 0 && _candidates[i].have_response) continue;
+
+      _rotate_idx = (i + 1) % _num_candidates;
+      Serial.print("[time sync] boot phase retry - re-requesting clock from ");
+      Serial.println(_candidates[i].label);
+      sendClockRequestForSlot(mesh, i);
+      _state = State::WAITING_FOR_CLOCK;
+      _deadline = millis() + BOOT_SYNC_CLOCK_TIMEOUT_MS;
+      return;
+    }
+  }
+}
+
 void BootTimeSync::onControlData(SensorMesh& mesh, const mesh::Packet* pkt) {
   if (_state != State::WAITING_FOR_DISCOVERY) return;
   if (pkt->payload_len < 6) return;

@@ -49,6 +49,33 @@
 // feature existed.
 #define MESHTEMP_REGION "se1780"
 
+// Boot-phase time sync: how long the node stays continuously awake after a
+// cold boot, hunting for a clock, before giving up and starting normal
+// cycling anyway.
+//
+// Why this exists: the production build powers the radio down as soon as a
+// send cycle resolves, which on a healthy mesh takes about two seconds. That
+// left the active sync ladder roughly two seconds per hour to broadcast
+// discovery, hear a repeater answer, request its clock and get a reply -
+// steps that were measured taking 2-4 seconds each. The node could not sync
+// at all in the field, and sent every reading with timestamp 0 forever. The
+// boot phase gives the ladder uninterrupted time to finish exactly once,
+// after which the clock persists and normal hourly cycling resumes.
+//
+// The ceiling bounds the cost: on a mesh with no reachable repeater the node
+// is awake for at most this long, once, per cold boot. It is never
+// permanently silent - hitting the ceiling sends the reading with timestamp 0
+// and enters normal cycling, where the per-cycle retry and the passive advert
+// path keep trying for free.
+#define MESHTEMP_SYNC_AWAKE_MAX_SECS (60UL * 60UL)
+
+// Boot-phase retry cadence. Replaces the per-cycle cadence, which has no
+// meaning while the node is continuously awake. Kept above the repeater anon
+// rate limit's window (four requests per 180 s, per repeater) with margin,
+// and requests rotate between known repeaters so this node never consumes one
+// repeater's allowance by itself.
+#define MESHTEMP_SYNC_RETRY_SECS 150
+
 // Time sync tuning (see examples/meshtemp/BootTimeSync.h for the full design
 // and examples/meshtemp/README.md's "Time sync" section).
 //

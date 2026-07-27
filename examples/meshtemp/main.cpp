@@ -43,6 +43,17 @@
   static uint8_t pending_data[5 + MESHTEMP_MSG_MAX_LEN];
   static int pending_data_len = 0;
 
+  // Boot-phase time sync state. After a cold boot the node stays awake and
+  // sends nothing until the clock is trusted, so the very first reading to
+  // reach the channel carries a real timestamp instead of 0. Deliberately
+  // NOT guarded by MESHTEMP_SLEEP_CYCLE: both envs run it, so the bench
+  // build remains a faithful test of what production actually does. That
+  // matters here specifically - the defect this fixes was invisible on the
+  // bench precisely because the bench build never slept.
+  static bool boot_sync_phase = true;
+  static unsigned long boot_sync_deadline = 0;
+  static unsigned long next_sync_retry_due = 0;
+
   #ifndef MESHTEMP_SLEEP_CYCLE
   // Bench-test-only scheduling state (see the non-sleep branch in loop()).
   static unsigned long next_test_read_due = 0;
@@ -469,9 +480,15 @@ void setup() {
   next_test_send_due = millis() + MESHTEMP_TEST_SEND_INTERVAL_MS;
 #endif
 
-  // Run the first cycle immediately on boot, both envs - confirms
-  // connectivity right away instead of waiting a full interval first.
-  meshtempStartCycle();
+  // Enter the boot-phase time sync instead of sending straight away. No
+  // reading goes out until the clock is trusted (or the ceiling expires), so
+  // the first message on the channel carries a real timestamp. The first
+  // retry fires immediately; loop() drives the rest.
+  boot_sync_deadline = millis() + (MESHTEMP_SYNC_AWAKE_MAX_SECS * 1000UL);
+  next_sync_retry_due = millis();
+  Serial.print("[time sync] boot phase: staying awake until synced, ceiling ");
+  Serial.print(MESHTEMP_SYNC_AWAKE_MAX_SECS);
+  Serial.println("s - no reading is sent until the clock is set");
 #endif
 }
 
@@ -509,6 +526,34 @@ void loop() {
 #ifdef MESHTEMP_DS18B20
   boot_time_sync.tick(the_mesh);
   meshtempCycleTick();
+
+  // Boot phase: stay awake, send nothing, drive the sync ladder on its own
+  // cadence. Runs before either scheduler below and returns early, so no
+  // cycle starts and (on the production build) no sleep happens until the
+  // phase ends. It ends exactly once per cold boot, in one of two ways.
+  if (boot_sync_phase) {
+    if (boot_time_sync.synced()) {
+      // Success: fire the first reading right now, with a real timestamp.
+      Serial.println("[time sync] boot phase complete - clock set, sending first reading now");
+      boot_sync_phase = false;
+      meshtempStartCycle();
+    } else if ((long)(millis() - boot_sync_deadline) >= 0) {
+      // Ceiling hit: no time source reachable. Say so plainly, then behave
+      // exactly as before - the reading still goes out (with timestamp 0),
+      // and normal cycling keeps retrying via the per-cycle ladder and the
+      // passive advert path. Never permanently silent.
+      Serial.print("[time sync] boot phase gave up after ");
+      Serial.print(MESHTEMP_SYNC_AWAKE_MAX_SECS);
+      Serial.println("s with no usable time source - sending with timestamp=0 and entering normal cycling");
+      boot_sync_phase = false;
+      meshtempStartCycle();
+    } else if ((long)(millis() - next_sync_retry_due) >= 0) {
+      next_sync_retry_due = millis() + (MESHTEMP_SYNC_RETRY_SECS * 1000UL);
+      boot_time_sync.bootPhaseRetry(the_mesh);
+    }
+    rtc_clock.tick();
+    return;   // no cycling, no sleeping, while the boot phase runs
+  }
 
 #ifdef MESHTEMP_SLEEP_CYCLE
   // Production scheduler: once the cycle (including any retry) has fully

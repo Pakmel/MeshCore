@@ -122,6 +122,25 @@ public:
   // attempt (if any) - never blocks, never delays sleep.
   void tick(SensorMesh& mesh);
 
+  // Boot-phase retry, driven on the MESHTEMP_SYNC_RETRY_SECS cadence while
+  // main.cpp holds the node awake before the first sync. Differs from
+  // retryIfNeeded() in two ways, both to respect the repeater anon rate limit
+  // (four per 180 s, per repeater) now that retries come every ~150 s instead
+  // of once per hourly cycle:
+  //   - Discovery is re-broadcast ONLY while no repeater has been heard at
+  //     all. Once any repeater is known, re-broadcasting adds nothing and
+  //     costs airtime.
+  //   - Otherwise it re-requests the clock from ONE known repeater per call,
+  //     rotating through them, so a single repeater's allowance is never
+  //     consumed by this node alone. Slots still waiting on a first reply are
+  //     preferred over ones that already answered.
+  // No-op once synced(), and no-op while an attempt is still in flight.
+  void bootPhaseRetry(SensorMesh& mesh);
+
+  // True once any repeater's identity is known (heard via discovery response
+  // or a passive advert), whether or not it has given us a timestamp yet.
+  bool anyRepeaterHeard() const;
+
   // Feed every received PAYLOAD_TYPE_CONTROL packet here (from
   // onControlDataRecv). No-op unless it's a matching discover response
   // during an active discovery window with a free candidate slot.
@@ -160,6 +179,10 @@ private:
   // now" count, see countValidCandidates() for that.
   Candidate _candidates[MAX_TIME_SYNC_CANDIDATES];
   int _num_candidates = 0;
+
+  // Round-robin cursor for bootPhaseRetry()'s rotation between known
+  // repeaters. Phase 1 only; meaningless once synced.
+  int _rotate_idx = 0;
 
   // Phase 2 self-distrust escalation tracking - distinct sources behind
   // recent REJECTED proposals (most recent rejected value per source), plus
