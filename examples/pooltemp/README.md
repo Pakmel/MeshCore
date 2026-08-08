@@ -15,6 +15,13 @@ one deliberate difference: the DS18B20 1-Wire data pin. MeshTemp reads the probe
 (`PIN_SERIAL2_TX`, nRF52840 `P0.20`). Transmit timing, repeater echo detection,
 stay-awake/sleep logic, the message format and everything else are unchanged.
 
+PoolTemp numbers its own releases from **0.1.0** (`POOLTEMP_VERSION` in
+`src/pooltemp_version.h`, printed to serial at boot), independently of MeshTemp's
+0.x series — it does not inherit MeshTemp's 0.9.0. Release tags are prefixed
+`pooltemp-v` so the two projects' tags never collide in this repo. Version
+numbers elsewhere in this file that read "MeshTemp 0.9.0" are lineage notes
+about the code PoolTemp was forked from, not PoolTemp versions.
+
 ## Parts list
 
 * RAK4631 WisBlock Core module (nRF52840 + SX1262 LoRa radio)
@@ -334,7 +341,8 @@ mere disagreement. The decision:
 * **No source answers** — keep retrying, no limit. See the boot phase below
   for what happens meanwhile.
 
-**Boot phase (0.9.0 and later).** After a cold boot the node stays awake
+**Boot phase (MeshTemp 0.9.0 and later, so in every PoolTemp build).** After a
+cold boot the node stays awake
 continuously and sends nothing until the clock is trusted, retrying every
 `POOLTEMP_SYNC_RETRY_SECS` (default 150s). The moment the first sync
 succeeds it takes a reading immediately — carrying a real timestamp — and
@@ -356,7 +364,7 @@ Why the phase exists: the production build powers the radio down as soon as
 a send cycle resolves, about two seconds on a healthy mesh. That left the
 active ladder roughly two seconds per hour to broadcast discovery, hear a
 reply, request a clock and receive it — steps measured at 2-4 seconds each.
-Before 0.9.0 a sleeping node could not sync in the field at all, and sent
+Before MeshTemp 0.9.0 a sleeping node could not sync in the field at all, and sent
 every reading with timestamp `0` indefinitely. The bench build never showed
 it, because the bench build never sleeps.
 
