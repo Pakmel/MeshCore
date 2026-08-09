@@ -20,7 +20,8 @@ PoolTemp is a small fork of [MeshCore](https://github.com/meshcore-dev/MeshCore)
 | 4x small 5 V solar panels | Wired **in parallel** (never in series) |
 | U.FL → SMA pigtail + 868 MHz antenna | |
 
-Enclosure files (STLs) are in the [`hardware/`](hardware/) folder.
+3D-printed enclosure — STLs and print settings are on MakerWorld:
+**[Solar Pool Thermometer (MeshCore) on MakerWorld](https://makerworld.com/sv/models/3153007-solar-pool-thermometer-meshtastic-meshcore)**
 
 ---
 
